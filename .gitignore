@@ -1,0 +1,12 @@
+# Environment and secrets — never commit
+.env
+.env.local
+.env.*.local
+*/.env
+speed-to-response/.env
+dashboard/.env
+
+# OS and editor
+.DS_Store
+.idea
+.vscode/
