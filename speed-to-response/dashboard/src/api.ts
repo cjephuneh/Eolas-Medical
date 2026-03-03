@@ -126,6 +126,10 @@ export const api = {
         body: JSON.stringify({ message_template: messageTemplate }),
       }
     ),
+  inboxLinkedin: async (): Promise<Lead[]> => {
+    const res = await request<LeadsResponse>("/inbox/linkedin");
+    return Array.isArray(res.leads) ? res.leads : [];
+  },
   lead: (id: string) => request<Lead>(`/leads/${encodeURIComponent(id)}`),
   sendReply: (id: string, body: string, subject?: string) =>
     request<{ status: string; message: string; channel: string }>(`/leads/${encodeURIComponent(id)}/send-reply`, {

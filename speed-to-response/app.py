@@ -11,7 +11,23 @@ import os
 from apscheduler.schedulers.background import BackgroundScheduler
 from flask import Flask, Response, jsonify, request
 
-from config import SLACK_CHANNEL_ID
+from config import EXCLUDE_SENDER_EMAILS, SLACK_CHANNEL_ID
+
+
+def _filter_excluded_senders(records: list[dict]) -> list[dict]:
+    """Drop any lead whose sender (lead_name/email) is one of our sending mailboxes."""
+    if not EXCLUDE_SENDER_EMAILS:
+        return records
+    out = []
+    for r in records:
+        sender = (
+            (r.get("lead_name") or "").strip().lower()
+            or (r.get("email") or "").strip().lower()
+        )
+        if sender and sender in EXCLUDE_SENDER_EMAILS:
+            continue
+        out.append(r)
+    return out
 
 
 def _cors_response(resp: Response) -> Response:
@@ -58,6 +74,7 @@ def index() -> tuple[dict, int]:
             "sources": "/sources",
             "sources_debug": "/sources/debug",
             "campaigns": "/campaigns (GET — all Prosp campaigns from api/v1/campaigns/lists)",
+            "inbox_linkedin": "/inbox/linkedin (GET — LinkedIn messages only)",
             "leads": "/leads (GET, JSON; ?format=csv for CSV)",
             "leads_export": "/leads/export (GET, CSV download; ?send_to_slack=1 to also upload to Slack)",
             "leads_export_to_slack": "/leads/export-to-slack (POST or GET, upload CSV to Slack)",
@@ -329,12 +346,27 @@ def sources_debug() -> tuple[dict, int]:
     return jsonify(out), 200
 
 
-@app.route("/leads", methods=["GET"])
-def leads() -> tuple[dict, int] | Response:
-    """Return all processed leads from store. Use ?format=csv for CSV download."""
+@app.route("/inbox/linkedin", methods=["GET", "OPTIONS"])
+def inbox_linkedin() -> tuple[dict, int] | tuple[Response, int]:
+    """Return all LinkedIn leads (from store). Same as /leads but filtered to channel=linkedin; excludes sending mailboxes."""
+    if request.method == "OPTIONS":
+        return _cors_response(Response(status=204)), 204
     from store import get_all
     try:
-        records = get_all()
+        records = _filter_excluded_senders(get_all())
+    except Exception as e:
+        logger.exception("inbox_linkedin get_all failed: %s", e)
+        return jsonify({"error": "INBOX_LOAD_FAILED", "message": str(e)}), 500
+    linkedin_only = [r for r in records if (r.get("channel") or "").lower() == "linkedin"]
+    return jsonify({"count": len(linkedin_only), "leads": linkedin_only}), 200
+
+
+@app.route("/leads", methods=["GET"])
+def leads() -> tuple[dict, int] | Response:
+    """Return all processed leads from store (excluding sending mailboxes). Use ?format=csv for CSV."""
+    from store import get_all
+    try:
+        records = _filter_excluded_senders(get_all())
     except Exception as e:
         logger.exception("leads get_all failed: %s", e)
         return jsonify({"error": "LEADS_LOAD_FAILED", "message": str(e)}), 500
@@ -345,10 +377,10 @@ def leads() -> tuple[dict, int] | Response:
 
 @app.route("/leads/<lead_id>", methods=["GET"])
 def lead_by_id(lead_id: str) -> tuple[dict, int]:
-    """Return a single lead by id. Used by dashboard for lead detail view."""
+    """Return a single lead by id. Used by dashboard for lead detail view. Excludes sending mailboxes."""
     from store import get_all
     try:
-        records = get_all()
+        records = _filter_excluded_senders(get_all())
     except Exception as e:
         logger.exception("leads get_all failed: %s", e)
         return jsonify({"error": "LEADS_LOAD_FAILED", "message": str(e)}), 500
@@ -366,7 +398,7 @@ def lead_send_reply(lead_id: str) -> tuple[dict, int]:
     from actions.prosp_reply import send_linkedin_reply
     from run_cycle import _suggested_to_linkedin_message
     try:
-        records = get_all()
+        records = _filter_excluded_senders(get_all())
     except Exception as e:
         logger.exception("leads get_all failed: %s", e)
         return jsonify({"error": "LEADS_LOAD_FAILED", "message": str(e)}), 500
@@ -409,10 +441,10 @@ def lead_send_reply(lead_id: str) -> tuple[dict, int]:
 
 @app.route("/leads/export", methods=["GET"])
 def leads_export() -> Response | tuple[dict, int]:
-    """Download processed leads as CSV. Add ?send_to_slack=1 to also upload the CSV to Slack."""
+    """Download processed leads as CSV (excluding sending mailboxes). Add ?send_to_slack=1 to also upload to Slack."""
     from store import get_all
     try:
-        records = get_all()
+        records = _filter_excluded_senders(get_all())
     except Exception as e:
         logger.exception("leads_export get_all failed: %s", e)
         return Response("Error loading leads", status=500, mimetype="text/plain")
@@ -427,10 +459,10 @@ def leads_export() -> Response | tuple[dict, int]:
 
 @app.route("/leads/export-to-slack", methods=["POST", "GET"])
 def leads_export_to_slack() -> tuple[dict, int]:
-    """Build CSV from stored leads and upload to the configured Slack channel."""
+    """Build CSV from stored leads (excluding sending mailboxes) and upload to Slack."""
     from store import get_all
     try:
-        records = get_all()
+        records = _filter_excluded_senders(get_all())
     except Exception as e:
         logger.exception("leads_export_to_slack get_all failed: %s", e)
         return jsonify({"error": "LEADS_LOAD_FAILED", "message": str(e)}), 500

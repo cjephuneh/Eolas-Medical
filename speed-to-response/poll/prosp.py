@@ -529,9 +529,16 @@ def get_prosp_signals_via_campaigns(
     max_leads_per_campaign: int | None = None,
 ) -> list[Signal]:
     """
-    Fetch Prosp signals by campaign → leads → conversation per lead.
+    Pull LinkedIn messages from Prosp and return normalized signals (same shape as Instantly).
+    Used by run_cycle() so LinkedIn replies appear in the same leads list as email.
+
+    Prosp API used:
+    - POST api/v1/campaigns/lists  → campaign list
+    - POST api/v1/campaigns/leads  → leads per campaign (body: campaign_id)
+    - POST api/v1/leads/conversation → messages per lead (body: linkedin_url, sender)
+
     Uses PROSP_MAX_CAMPAIGNS (0 = all) and PROSP_MAX_LEADS_PER_CAMPAIGN from config when args are None.
-    Requires PROSP_SENDER to be set or the conversation API returns 400.
+    Requires PROSP_SENDER (your LinkedIn profile URL) or the conversation API returns 400.
     """
     if not PROSP_API_KEY:
         return []

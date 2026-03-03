@@ -8,7 +8,7 @@ from typing import Any
 
 import requests
 
-from config import INSTANTLY_API_KEY, INSTANTLY_BASE_URL
+from config import EXCLUDE_SENDER_EMAILS, INSTANTLY_API_KEY, INSTANTLY_BASE_URL
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +111,17 @@ def normalize_email_to_signal(email: dict[str, Any]) -> Signal:
 
 
 def get_unread_signals(limit: int = 50) -> list[Signal]:
-    """Fetch unread emails from Instantly and return normalized signals."""
+    """Fetch unread emails from Instantly and return normalized signals.
+    Excludes any email whose sender (from) is in EXCLUDE_SENDER_EMAILS (our sending mailboxes).
+    """
     emails = fetch_unread_emails(limit=limit)
-    return [normalize_email_to_signal(e) for e in emails]
+    signals = [normalize_email_to_signal(e) for e in emails]
+    if not EXCLUDE_SENDER_EMAILS:
+        return signals
+    out = []
+    for s in signals:
+        sender = (s.get("leadName") or "").strip().lower()
+        if sender and sender in EXCLUDE_SENDER_EMAILS:
+            continue
+        out.append(s)
+    return out

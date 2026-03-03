@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type Lead } from "../api";
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
-
-export function Leads() {
+export function Inbox() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -13,17 +11,19 @@ export function Leads() {
   const [sendResult, setSendResult] = useState<{ ok: boolean; message: string } | null>(null);
   const detailRef = useRef<HTMLDivElement>(null);
 
-  const loadLeads = useCallback(() => {
+  const loadInbox = useCallback(() => {
+    setLoading(true);
+    setError(null);
     api
-      .leads()
+      .inboxLinkedin()
       .then((l) => setLeads(Array.isArray(l) ? l : []))
       .catch((err) => setError(err instanceof Error ? err.message : String(err)))
       .finally(() => setLoading(false));
   }, []);
 
   useEffect(() => {
-    loadLeads();
-  }, [loadLeads]);
+    loadInbox();
+  }, [loadInbox]);
 
   const onSelectLead = (lead: Lead) => {
     setSendResult(null);
@@ -39,15 +39,7 @@ export function Leads() {
       .catch(() => setDetailLoading(false));
   };
 
-  const canReply = (lead: Lead): boolean => {
-    if (lead.channel === "email") {
-      return Boolean(lead.reply_to_uuid && (lead.email || lead.lead_name));
-    }
-    if (lead.channel === "linkedin") {
-      return Boolean(lead.linkedin_url);
-    }
-    return false;
-  };
+  const canReply = (lead: Lead): boolean => Boolean(lead.linkedin_url);
 
   const handleSendReply = () => {
     if (!selectedLead) return;
@@ -76,7 +68,7 @@ export function Leads() {
     return (
       <div className="loading-wrap">
         <div className="spinner" aria-hidden />
-        <span>Loading leads…</span>
+        <span>Loading LinkedIn inbox…</span>
       </div>
     );
   }
@@ -91,25 +83,30 @@ export function Leads() {
   const list = Array.isArray(leads) ? leads : [];
 
   return (
-    <section className="leads">
+    <section className="inbox" aria-label="LinkedIn inbox">
       <div className="page-header">
         <div>
-          <h1 className="page-title">Leads</h1>
-          <p className="page-subtitle">Email replies (Instantly) and LinkedIn messages (Prosp). Run a cycle to pull both into this list.</p>
+          <h1 className="page-title">Inbox</h1>
+          <p className="page-subtitle">
+            All LinkedIn messages from Prosp. Run a cycle to pull the latest into this list.
+          </p>
         </div>
         <button
           type="button"
-          onClick={() => window.open(`${API_BASE}/leads/export`, "_blank")}
           className="btn primary"
-          aria-label="Export leads as CSV"
+          onClick={loadInbox}
+          disabled={loading}
+          aria-label="Refresh inbox"
         >
-          Export CSV
+          Refresh
         </button>
       </div>
       <p className="lead-count">Total: {list.length}</p>
       {list.length === 0 ? (
         <div className="table-wrap">
-          <div className="empty-state">No leads yet. Run a cycle or wait for new replies.</div>
+          <div className="empty-state">
+            No LinkedIn messages yet. Run a cycle to pull replies from Prosp campaigns.
+          </div>
         </div>
       ) : (
         <>
@@ -120,7 +117,10 @@ export function Leads() {
                 <button
                   type="button"
                   className="btn secondary"
-                  onClick={() => { setSelectedLead(null); setSendResult(null); }}
+                  onClick={() => {
+                    setSelectedLead(null);
+                    setSendResult(null);
+                  }}
                   aria-label="Close lead details"
                 >
                   Close
@@ -136,25 +136,26 @@ export function Leads() {
                   <dl className="lead-detail-dl">
                     <dt>Name</dt>
                     <dd>{selectedLead.lead_name || "—"}</dd>
-                    <dt>Email / contact</dt>
+                    <dt>LinkedIn</dt>
                     <dd>
-                      {selectedLead.channel === "email" && (selectedLead.email || selectedLead.lead_name) ? (
-                        <a href={`mailto:${selectedLead.email || selectedLead.lead_name}`}>
-                          {selectedLead.email || selectedLead.lead_name}
-                        </a>
-                      ) : selectedLead.channel === "linkedin" && selectedLead.linkedin_url ? (
-                        <a href={selectedLead.linkedin_url} target="_blank" rel="noopener noreferrer">
-                          {selectedLead.linkedin_url}
+                      {selectedLead.linkedin_url ? (
+                        <a
+                          href={selectedLead.linkedin_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="campaign-lead-link"
+                        >
+                          View profile
                         </a>
                       ) : (
-                        selectedLead.lead_name || "—"
+                        "—"
                       )}
                     </dd>
                     <dt>Company</dt>
                     <dd>{selectedLead.company || "—"}</dd>
                     <dt>Campaign</dt>
                     <dd>{selectedLead.campaign || "—"}</dd>
-                    <dt>Their reply / message</dt>
+                    <dt>Their message</dt>
                     <dd className="lead-detail-reply">{selectedLead.reply_text || "—"}</dd>
                     <dt>AI-generated reply</dt>
                     <dd className="lead-detail-suggested">{selectedLead.suggested_response || "—"}</dd>
@@ -170,7 +171,7 @@ export function Leads() {
                       {sending ? "Sending…" : "Reply"}
                     </button>
                     {!canReply(selectedLead) && (
-                      <span className="muted">Reply not available (missing email/LinkedIn metadata for this lead).</span>
+                      <span className="muted">Reply not available (missing LinkedIn URL for this lead).</span>
                     )}
                     {sendResult && (
                       <span className={sendResult.ok ? "send-ok" : "send-error"} role="status">
@@ -188,7 +189,6 @@ export function Leads() {
                 <tr>
                   <th>Lead</th>
                   <th>Company</th>
-                  <th>Channel</th>
                   <th>Classification</th>
                   <th>Notified</th>
                 </tr>
@@ -211,9 +211,6 @@ export function Leads() {
                   >
                     <td>{lead.lead_name}</td>
                     <td>{lead.company || "—"}</td>
-                    <td>
-                      <span className={`badge channel`}>{lead.channel}</span>
-                    </td>
                     <td>
                       <span className={`badge ${lead.classification}`}>
                         {(lead.classification || "").replace("_", " ")}

@@ -62,6 +62,13 @@ EOLAS_DEMO_VIDEO_URL = _get("EOLAS_DEMO_VIDEO_URL", "").strip()
 DATA_DIR = Path(__file__).resolve().parent / "data"
 PROCESSED_JSON = DATA_DIR / "processed.json"
 
+# Exclude these sender addresses from ever appearing as leads (our sending mailboxes).
+# Comma-separated; case-insensitive. Example: declan@mail.teameolasmedical.com,richard@hci.digital
+_EXCLUDE_SENDER_RAW = _get("EXCLUDE_SENDER_EMAILS", "").strip()
+EXCLUDE_SENDER_EMAILS: frozenset[str] = frozenset(
+    e.strip().lower() for e in _EXCLUDE_SENDER_RAW.split(",") if e.strip()
+)
+
 
 def validate_config() -> list[str]:
     """Return list of missing required config keys."""

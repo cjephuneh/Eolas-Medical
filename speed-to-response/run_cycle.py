@@ -67,8 +67,9 @@ def run_cycle() -> dict[str, int]:
     try:
         if PROSP_API_KEY:
             signals.extend(get_prosp_signals())
-            # Also pull via campaign → leads → conversation (when list endpoint returns no threads)
-            signals.extend(get_prosp_signals_via_campaigns())  # uses PROSP_MAX_CAMPAIGNS (0=all), PROSP_MAX_LEADS_PER_CAMPAIGN from config
+            # Pull LinkedIn messages from Prosp: campaigns/lists → campaigns/leads → leads/conversation per lead.
+            # Same pipeline as email: these signals are classified, notified, and stored in the same leads list.
+            signals.extend(get_prosp_signals_via_campaigns())  # PROSP_MAX_CAMPAIGNS (0=all), PROSP_MAX_LEADS_PER_CAMPAIGN
     except Exception as e:
         logger.exception("LinkedIn (Prosp) fetch failed: %s", e)
 
