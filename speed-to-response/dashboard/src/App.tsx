@@ -1,7 +1,7 @@
 import { NavLink, Route, Routes } from "react-router-dom";
 import { Overview } from "./pages/Overview";
 import { Leads } from "./pages/Leads";
-import { Inbox } from "./pages/Inbox";
+// import { Inbox } from "./pages/Inbox";
 import { Campaigns } from "./pages/Campaigns";
 import { Sources } from "./pages/Sources";
 import { RunCycle } from "./pages/RunCycle";
@@ -27,14 +27,14 @@ function IconOverview() {
   );
 }
 
-function IconInbox() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
-      <path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
-    </svg>
-  );
-}
+// function IconInbox() {
+//   return (
+//     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+//       <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
+//       <path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
+//     </svg>
+//   );
+// }
 
 function IconLeads() {
   return (
@@ -104,7 +104,7 @@ function App() {
       <main className="main">
         <Routes>
           <Route path="/" element={<Overview />} />
-          <Route path="/inbox" element={<Inbox />} />
+          {/* <Route path="/inbox" element={<Inbox />} /> */}
           <Route path="/leads" element={<Leads />} />
           <Route path="/campaigns" element={<Campaigns />} />
           <Route path="/sources" element={<Sources />} />
