@@ -307,12 +307,21 @@ tbody tr:hover td {
   background: #f8fafc;
 }
 
-.leads tbody tr[role="button"] {
+.leads tbody tr[role="button"],
+.overview tbody tr[role="button"] {
   cursor: pointer;
 }
 
-.leads tbody tr.selected td {
+.leads tbody tr.selected td,
+.overview tbody tr.selected td {
   background: #e0e7ff;
+}
+
+.message-preview {
+  max-width: 20rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .lead-detail {
