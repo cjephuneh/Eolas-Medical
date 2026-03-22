@@ -5,6 +5,7 @@ import { buildEditableReplyFromLead } from "../utils/suggestedReply";
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 type LeadFilterTab = "all" | "pending" | "replied";
+type EmailMessageFilterTab = "all" | "has_reply" | "no_reply_body";
 
 function leadIsReplied(lead: Lead): boolean {
   return Boolean((lead.replied_at || "").trim());
@@ -20,6 +21,9 @@ export function Leads() {
   const [sendResult, setSendResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [replyDraft, setReplyDraft] = useState("");
   const [filterTab, setFilterTab] = useState<LeadFilterTab>("all");
+  const [inboxSearch, setInboxSearch] = useState("");
+  const [emailMessageTab, setEmailMessageTab] = useState<EmailMessageFilterTab>("all");
+  const [campaignFilter, setCampaignFilter] = useState("");
   const detailRef = useRef<HTMLDivElement>(null);
 
   const loadLeads = useCallback(() => {
@@ -57,11 +61,58 @@ export function Leads() {
     return { all: list.length, pending, replied };
   }, [list]);
 
-  const filteredList = useMemo(() => {
-    if (filterTab === "pending") return list.filter((l) => !leadIsReplied(l));
-    if (filterTab === "replied") return list.filter((l) => leadIsReplied(l));
-    return list;
+  const leadsAfterStatusTab = useMemo(() => {
+    let rows = list;
+    if (filterTab === "pending") rows = rows.filter((l) => !leadIsReplied(l));
+    else if (filterTab === "replied") rows = rows.filter((l) => leadIsReplied(l));
+    return rows;
   }, [list, filterTab]);
+
+  const replyTextStats = useMemo(() => {
+    let withReply = 0;
+    for (const l of leadsAfterStatusTab) {
+      if ((l.reply_text || "").trim()) withReply += 1;
+    }
+    const total = leadsAfterStatusTab.length;
+    return { withReply, noReplyBody: total - withReply, total };
+  }, [leadsAfterStatusTab]);
+
+  const campaignOptions = useMemo(() => {
+    const s = new Set<string>();
+    for (const l of list) {
+      const c = (l.campaign || "").trim();
+      if (c) s.add(c);
+    }
+    return Array.from(s).sort((a, b) => a.localeCompare(b));
+  }, [list]);
+
+  const filteredList = useMemo(() => {
+    let rows = leadsAfterStatusTab;
+    if (emailMessageTab === "has_reply") {
+      rows = rows.filter((l) => Boolean((l.reply_text || "").trim()));
+    } else if (emailMessageTab === "no_reply_body") {
+      rows = rows.filter((l) => !(l.reply_text || "").trim());
+    }
+    if (campaignFilter.trim()) {
+      rows = rows.filter((l) => (l.campaign || "").trim() === campaignFilter.trim());
+    }
+    const q = inboxSearch.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((l) => {
+      const sender = (l.email || l.lead_name || "").toLowerCase();
+      const company = (l.company || "").toLowerCase();
+      const camp = (l.campaign || "").toLowerCase();
+      const body = (l.reply_text || "").toLowerCase();
+      return (
+        sender.includes(q) ||
+        company.includes(q) ||
+        camp.includes(q) ||
+        body.includes(q)
+      );
+    });
+  }, [leadsAfterStatusTab, inboxSearch, emailMessageTab, campaignFilter]);
+
+  const showEmailDetail = Boolean(selectedLead || detailLoading);
 
   const onSelectLead = (lead: Lead) => {
     setSendResult(null);
@@ -137,58 +188,135 @@ export function Leads() {
 
   return (
     <section className="leads">
-      <div className="page-header">
-        <div>
-          <h1 className="page-title">Emails</h1>
-          <p className="page-subtitle">Processed email replies from Instantly. Run a cycle to pull the latest into this list.</p>
-        </div>
-        <button
-          type="button"
-          onClick={() => window.open(`${API_BASE}/leads/export`, "_blank")}
-          className="btn primary"
-          aria-label="Export leads as CSV"
-        >
-          Export CSV
-        </button>
-      </div>
-      <div className="leads-toolbar">
-        <p className="lead-count" role="status">
-          Total: {statusCounts.all}
-          <span className="lead-count-sep" aria-hidden>
-            {" "}
-            ·{" "}
-          </span>
-          <span className="muted">Pending: {statusCounts.pending}</span>
-          <span className="lead-count-sep" aria-hidden>
-            {" "}
-            ·{" "}
-          </span>
-          <span className="muted">Replied: {statusCounts.replied}</span>
-        </p>
-        <div className="lead-filter-tabs" role="tablist" aria-label="Filter by reply status">
-          {(
-            [
-              { id: "all" as const, label: "All" },
-              { id: "pending" as const, label: "Pending" },
-              { id: "replied" as const, label: "Replied" },
-            ] as const
-          ).map(({ id, label }) => (
+      {!showEmailDetail && (
+        <>
+          <div className="page-header">
+            <div>
+              <h1 className="page-title">Emails</h1>
+              <p className="page-subtitle">
+                Open one email to work on it alone — no list below until you go back.
+              </p>
+            </div>
             <button
-              key={id}
               type="button"
-              role="tab"
-              aria-selected={filterTab === id}
-              aria-controls="emails-table-panel"
-              id={`filter-tab-${id}`}
-              className={`btn filter-tab ${filterTab === id ? "active" : "secondary"}`}
-              onClick={() => setFilterTab(id)}
+              onClick={() => window.open(`${API_BASE}/leads/export`, "_blank")}
+              className="btn primary"
+              aria-label="Export leads as CSV"
             >
-              {label}
-              {id === "all" ? ` (${statusCounts.all})` : id === "pending" ? ` (${statusCounts.pending})` : ` (${statusCounts.replied})`}
+              Export CSV
             </button>
-          ))}
-        </div>
-      </div>
+          </div>
+          <div className="leads-toolbar">
+            <p className="lead-count" role="status">
+              Total: {statusCounts.all}
+              <span className="lead-count-sep" aria-hidden>
+                {" "}
+                ·{" "}
+              </span>
+              <span className="muted">Pending: {statusCounts.pending}</span>
+              <span className="lead-count-sep" aria-hidden>
+                {" "}
+                ·{" "}
+              </span>
+              <span className="muted">Replied: {statusCounts.replied}</span>
+            </p>
+            <div className="lead-filter-tabs" role="tablist" aria-label="Filter by reply status">
+              {(
+                [
+                  { id: "all" as const, label: "All" },
+                  { id: "pending" as const, label: "Pending" },
+                  { id: "replied" as const, label: "Replied" },
+                ] as const
+              ).map(({ id, label }) => (
+                <button
+                  key={id}
+                  type="button"
+                  role="tab"
+                  aria-selected={filterTab === id}
+                  aria-controls="emails-table-panel"
+                  id={`filter-tab-${id}`}
+                  className={`btn filter-tab ${filterTab === id ? "active" : "secondary"}`}
+                  onClick={() => setFilterTab(id)}
+                >
+                  {label}
+                  {id === "all" ? ` (${statusCounts.all})` : id === "pending" ? ` (${statusCounts.pending})` : ` (${statusCounts.replied})`}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="campaign-metrics leads-metrics" role="region" aria-label="Message counts for current All or Pending or Replied tab">
+            <div className="campaign-metric-card">
+              <span className="campaign-metric-value">{replyTextStats.total}</span>
+              <span className="campaign-metric-label">In this list</span>
+            </div>
+            <div className="campaign-metric-card">
+              <span className="campaign-metric-value">{replyTextStats.withReply}</span>
+              <span className="campaign-metric-label">With reply text</span>
+            </div>
+            <div className="campaign-metric-card">
+              <span className="campaign-metric-value">{replyTextStats.noReplyBody}</span>
+              <span className="campaign-metric-label">No reply body</span>
+            </div>
+          </div>
+          <div className="leads-email-filters">
+            <div className="lead-filter-tabs email-message-tabs" role="tablist" aria-label="Filter by message content">
+              {(
+                [
+                  { id: "all" as const, label: "All", count: replyTextStats.total },
+                  { id: "has_reply" as const, label: "With reply", count: replyTextStats.withReply },
+                  { id: "no_reply_body" as const, label: "No reply", count: replyTextStats.noReplyBody },
+                ] as const
+              ).map(({ id, label, count }) => (
+                <button
+                  key={id}
+                  type="button"
+                  role="tab"
+                  aria-selected={emailMessageTab === id}
+                  className={`btn filter-tab ${emailMessageTab === id ? "active" : "secondary"}`}
+                  onClick={() => setEmailMessageTab(id)}
+                >
+                  {label} ({count})
+                </button>
+              ))}
+            </div>
+            {campaignOptions.length > 0 && (
+              <div className="leads-campaign-select-wrap">
+                <label htmlFor="emails-campaign-filter" className="leads-campaign-label">
+                  Campaign
+                </label>
+                <select
+                  id="emails-campaign-filter"
+                  className="leads-campaign-select"
+                  value={campaignFilter}
+                  onChange={(e) => setCampaignFilter(e.target.value)}
+                  aria-label="Filter by Instantly campaign name"
+                >
+                  <option value="">All campaigns</option>
+                  {campaignOptions.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+          <div className="leads-inbox-search">
+            <label htmlFor="emails-inbox-search" className="sr-only">
+              Search inbox
+            </label>
+            <input
+              id="emails-inbox-search"
+              type="search"
+              className="leads-inbox-search-input"
+              placeholder="Search sender, company, campaign, reply text…"
+              value={inboxSearch}
+              onChange={(e) => setInboxSearch(e.target.value)}
+              aria-label="Search emails in the list"
+            />
+          </div>
+        </>
+      )}
       {list.length === 0 ? (
         <div className="table-wrap">
           <div className="empty-state">No email leads yet. Run a cycle or wait for new replies.</div>
@@ -196,19 +324,46 @@ export function Leads() {
       ) : filteredList.length === 0 ? (
         <div className="table-wrap">
           <div className="empty-state" role="status">
-            No leads match this filter. Try <strong>All</strong> or another tab.
+            {inboxSearch.trim() || emailMessageTab !== "all" || campaignFilter.trim()
+              ? "No emails match these filters. Clear search, set Campaign to “All campaigns”, or try All / other tabs."
+              : (
+                <>
+                  No leads match this filter. Try <strong>All</strong> or another tab.
+                </>
+              )}
           </div>
         </div>
       ) : (
         <>
-          {(selectedLead || detailLoading) && (
-            <div ref={detailRef} className="card wide lead-detail" role="region" aria-label="Email details">
+          {showEmailDetail && (
+            <div
+              ref={detailRef}
+              className="card wide lead-detail lead-detail-focused"
+              role="region"
+              aria-label="Email details"
+            >
+              <div className="focused-view-nav">
+                <button
+                  type="button"
+                  className="btn secondary focused-view-back"
+                  onClick={() => {
+                    setSelectedLead(null);
+                    setSendResult(null);
+                  }}
+                  aria-label="Back to all emails"
+                >
+                  ← All emails
+                </button>
+              </div>
               <div className="lead-detail-header">
                 <h3>Email details</h3>
                 <button
                   type="button"
                   className="btn secondary"
-                  onClick={() => { setSelectedLead(null); setSendResult(null); }}
+                  onClick={() => {
+                    setSelectedLead(null);
+                    setSendResult(null);
+                  }}
                   aria-label="Close lead details"
                 >
                   Close
@@ -306,6 +461,7 @@ export function Leads() {
               ) : null}
             </div>
           )}
+          {!showEmailDetail && (
           <div className="table-wrap" id="emails-table-panel" role="tabpanel" aria-labelledby={`filter-tab-${filterTab}`}>
             <table>
               <thead>
@@ -361,6 +517,7 @@ export function Leads() {
               </tbody>
             </table>
           </div>
+          )}
         </>
       )}
     </section>

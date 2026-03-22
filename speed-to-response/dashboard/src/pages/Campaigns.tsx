@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   type CampaignLeadWithMessages,
   type CampaignLeadsResponse,
   type ProspCampaign,
 } from "../api";
+
+type CampaignMessageFilterTab = "all" | "with_messages" | "no_messages";
 
 export function Campaigns() {
   const [campaigns, setCampaigns] = useState<ProspCampaign[]>([]);
@@ -24,6 +26,8 @@ export function Campaigns() {
   const [bulkSending, setBulkSending] = useState(false);
   const [bulkGenerateLoading, setBulkGenerateLoading] = useState(false);
   const [bulkResult, setBulkResult] = useState<{ sent: number; failed: number; total: number } | null>(null);
+  const [leadSearch, setLeadSearch] = useState("");
+  const [leadMessageTab, setLeadMessageTab] = useState<CampaignMessageFilterTab>("all");
 
   const loadCampaigns = useCallback(() => {
     api
@@ -42,6 +46,8 @@ export function Campaigns() {
     if (!cid) return;
     setLeadsError(null);
     setLeadsData(null);
+    setLeadSearch("");
+    setLeadMessageTab("all");
     setSelectedCampaign(c);
     setLeadsLoading(true);
     api
@@ -67,7 +73,46 @@ export function Campaigns() {
     setDraftByLead({});
     setBulkResult(null);
     setBulkTemplate("");
+    setLeadSearch("");
+    setLeadMessageTab("all");
   };
+
+  const showCampaignDetail = Boolean(selectedCampaign || leadsLoading);
+
+  const leadMessageStats = useMemo(() => {
+    const rows = leadsData?.leads;
+    if (!rows || !Array.isArray(rows)) {
+      return { total: 0, withMessages: 0, noMessages: 0 };
+    }
+    let withMessages = 0;
+    for (const l of rows) {
+      if (Array.isArray(l.messages) && l.messages.length > 0) withMessages += 1;
+    }
+    return {
+      total: rows.length,
+      withMessages,
+      noMessages: rows.length - withMessages,
+    };
+  }, [leadsData?.leads]);
+
+  const filteredCampaignLeads = useMemo(() => {
+    const rows = leadsData?.leads;
+    if (!rows || !Array.isArray(rows)) return [];
+    let out = rows;
+    if (leadMessageTab === "with_messages") {
+      out = out.filter((l) => (l.messages?.length ?? 0) > 0);
+    } else if (leadMessageTab === "no_messages") {
+      out = out.filter((l) => (l.messages?.length ?? 0) === 0);
+    }
+    const q = leadSearch.trim().toLowerCase();
+    if (!q) return out;
+    return out.filter((l) => {
+      const name = (l.name || "").toLowerCase();
+      const company = (l.company || "").toLowerCase();
+      const url = (l.linkedin_url || "").toLowerCase();
+      return name.includes(q) || company.includes(q) || url.includes(q);
+    });
+  }, [leadsData?.leads, leadSearch, leadMessageTab]);
 
   const leadRowKey = (lead: CampaignLeadWithMessages, idx: number): string => {
     const u = (lead.linkedin_url || "").trim();
@@ -157,24 +202,37 @@ export function Campaigns() {
 
   return (
     <section className="campaigns">
-      <h1 className="page-title">LinkedIn</h1>
-      <p className="page-subtitle">
-        Prosp campaigns: open a campaign to load leads, conversation history from the API, then generate an AI reply
-        (uses the thread when messages are loaded) and send — similar to the Emails page.
-      </p>
+      {!showCampaignDetail && (
+        <>
+          <h1 className="page-title">LinkedIn</h1>
+          <p className="page-subtitle">
+            Choose a campaign to open it only on this page — leads, threads, and reply in one place.
+          </p>
+        </>
+      )}
       {campaigns.length === 0 ? (
         <div className="card wide">
           <p className="muted">No campaigns or PROSP_API_KEY not set.</p>
         </div>
       ) : (
         <>
-          {(selectedCampaign || leadsLoading) && (
+          {showCampaignDetail && (
             <div
               ref={detailRef}
-              className="card wide campaign-detail"
+              className="card wide campaign-detail campaign-detail-focused"
               role="region"
               aria-label="Campaign leads and LinkedIn messages"
             >
+              <div className="focused-view-nav">
+                <button
+                  type="button"
+                  className="btn secondary focused-view-back"
+                  onClick={closeDetail}
+                  aria-label="Back to all campaigns"
+                >
+                  ← All campaigns
+                </button>
+              </div>
               <div className="lead-detail-header">
                 <h3>
                   {selectedCampaign?.campaign_name || "Campaign"} — leads &amp; messages
@@ -252,8 +310,65 @@ export function Campaigns() {
                       )}
                     </div>
                   </div>
+                  <div className="campaign-metrics" role="region" aria-label="Campaign lead and message counts">
+                    <div className="campaign-metric-card">
+                      <span className="campaign-metric-value">{leadMessageStats.total}</span>
+                      <span className="campaign-metric-label">Leads loaded</span>
+                    </div>
+                    <div className="campaign-metric-card">
+                      <span className="campaign-metric-value">{leadMessageStats.withMessages}</span>
+                      <span className="campaign-metric-label">With conversation</span>
+                    </div>
+                    <div className="campaign-metric-card">
+                      <span className="campaign-metric-value">{leadMessageStats.noMessages}</span>
+                      <span className="campaign-metric-label">No thread yet</span>
+                    </div>
+                  </div>
+                  <div className="campaign-lead-toolbar">
+                    <div className="lead-filter-tabs campaign-message-tabs" role="tablist" aria-label="Filter by messages">
+                      {(
+                        [
+                          { id: "all" as const, label: "All leads", count: leadMessageStats.total },
+                          { id: "with_messages" as const, label: "With messages", count: leadMessageStats.withMessages },
+                          { id: "no_messages" as const, label: "No messages", count: leadMessageStats.noMessages },
+                        ] as const
+                      ).map(({ id, label, count }) => (
+                        <button
+                          key={id}
+                          type="button"
+                          role="tab"
+                          aria-selected={leadMessageTab === id}
+                          className={`btn filter-tab ${leadMessageTab === id ? "active" : "secondary"}`}
+                          onClick={() => setLeadMessageTab(id)}
+                        >
+                          {label} ({count})
+                        </button>
+                      ))}
+                    </div>
+                    <div className="campaign-lead-filter">
+                      <label htmlFor="campaign-lead-search" className="sr-only">
+                        Filter leads by name or company
+                      </label>
+                      <input
+                        id="campaign-lead-search"
+                        type="search"
+                        className="campaign-lead-search-input"
+                        placeholder="Search name, company, LinkedIn URL…"
+                        value={leadSearch}
+                        onChange={(e) => setLeadSearch(e.target.value)}
+                        aria-label="Search leads in this campaign"
+                      />
+                    </div>
+                  </div>
                 <div className="campaign-leads-list">
-                  {leadsData.leads.map((lead, idx) => {
+                  {filteredCampaignLeads.length === 0 ? (
+                    <p className="muted" role="status">
+                      {leadSearch.trim() || leadMessageTab !== "all"
+                        ? "No leads match these filters. Clear search, choose All leads, or try another tab."
+                        : null}
+                    </p>
+                  ) : null}
+                  {filteredCampaignLeads.map((lead, idx) => {
                     const rowKey = leadRowKey(lead, idx);
                     const isOpen = expandedLeadKey === rowKey;
                     const draft = draftByLead[rowKey] ?? "";
@@ -301,9 +416,10 @@ export function Campaigns() {
                               (new lead, no DMs yet, or the API couldn’t read the thread).
                             </p>
                             <p className="muted small">
-                              If you expected messages here: set{" "}
-                              <code>PROSP_SENDER</code> in <code>.env</code> to your LinkedIn profile URL (the Prosp
-                              sender account), restart the API, and open this campaign again.
+                              If you expected messages: set <code>PROSP_SENDER</code> in <code>.env</code> to the
+                              LinkedIn profile URL of the account that is <strong>active</strong> in Prosp (not
+                              parked). It must match the connected account exactly. Restart the API and reload this
+                              campaign.
                             </p>
                             <p className="muted small">
                               You can still use <strong>Reply</strong> below — type manually or use{" "}
@@ -377,41 +493,43 @@ export function Campaigns() {
               )}
             </div>
           )}
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Campaign name</th>
-                  <th>Campaign ID</th>
-                </tr>
-              </thead>
-              <tbody>
-                {campaigns.map((c) => (
-                  <tr
-                    key={c.campaign_id || c.campaign_name}
-                    onClick={() => onSelectCampaign(c)}
-                    className={
-                      selectedCampaign?.campaign_id === c.campaign_id ? "selected" : ""
-                    }
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        onSelectCampaign(c);
-                      }
-                    }}
-                    aria-label={`View leads and comments for ${c.campaign_name}`}
-                  >
-                    <td>{c.campaign_name || "—"}</td>
-                    <td>
-                      <code className="campaign-id">{c.campaign_id || "—"}</code>
-                    </td>
+          {!showCampaignDetail && (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Campaign name</th>
+                    <th>Campaign ID</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {campaigns.map((c) => (
+                    <tr
+                      key={c.campaign_id || c.campaign_name}
+                      onClick={() => onSelectCampaign(c)}
+                      className={
+                        selectedCampaign?.campaign_id === c.campaign_id ? "selected" : ""
+                      }
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          onSelectCampaign(c);
+                        }
+                      }}
+                      aria-label={`Open campaign ${c.campaign_name}`}
+                    >
+                      <td>{c.campaign_name || "—"}</td>
+                      <td>
+                        <code className="campaign-id">{c.campaign_id || "—"}</code>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </>
       )}
     </section>

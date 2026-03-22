@@ -122,8 +122,11 @@ export const api = {
     const res = await request<CampaignsResponse>("/campaigns");
     return Array.isArray(res.campaigns) ? res.campaigns : [];
   },
-  campaignLeads: (campaignId: string) =>
-    request<CampaignLeadsResponse>(`/campaigns/${encodeURIComponent(campaignId)}/leads`),
+  /** Loads up to max_leads per campaign (server cap ~100) for dashboard. */
+  campaignLeads: (campaignId: string, maxLeads = 100) =>
+    request<CampaignLeadsResponse>(
+      `/campaigns/${encodeURIComponent(campaignId)}/leads?max_leads=${maxLeads}`
+    ),
   generateProspMessage: (name: string, context?: string) =>
     request<{ message: string }>("/prosp/generate-message", {
       method: "POST",
