@@ -1,46 +1,12 @@
-import { NavLink, Route, Routes } from "react-router-dom";
-import { Overview } from "./pages/Overview";
+import { Navigate, NavLink, Route, Routes } from "react-router-dom";
 import { Leads } from "./pages/Leads";
-import { Inbox } from "./pages/Inbox";
 import { Campaigns } from "./pages/Campaigns";
 import "./App.css";
 
 const navItems = [
-  { to: "/", label: "Overview", icon: IconOverview },
-  { to: "/inbox", label: "Inbox", icon: IconInbox },
   { to: "/leads", label: "Emails", icon: IconLeads },
   { to: "/campaigns", label: "LinkedIn", icon: IconCampaigns },
 ];
-
-function IconOverview() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <rect x="3" y="3" width="7" height="7" rx="1" />
-      <rect x="14" y="3" width="7" height="7" rx="1" />
-      <rect x="14" y="14" width="7" height="7" rx="1" />
-      <rect x="3" y="14" width="7" height="7" rx="1" />
-    </svg>
-  );
-}
-
-function IconInbox() {
-  return (
-    <svg
-      width="20"
-      height="20"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
-      <path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
-    </svg>
-  );
-}
 
 function IconLeads() {
   return (
@@ -64,8 +30,6 @@ function IconCampaigns() {
   );
 }
 
-// IconSources / IconRun removed from navigation.
-
 function App() {
   return (
     <div className="app">
@@ -79,11 +43,11 @@ function App() {
             <NavLink
               key={to}
               to={to}
-              end={to === "/"}
+              end
               className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}
             >
               <Icon />
-              <span>{label}</span>
+              <span className="sidebar-link-label">{label}</span>
             </NavLink>
           ))}
         </nav>
@@ -93,10 +57,10 @@ function App() {
       </aside>
       <main className="main">
         <Routes>
-          <Route path="/" element={<Overview />} />
+          <Route path="/" element={<Navigate to="/leads" replace />} />
           <Route path="/leads" element={<Leads />} />
           <Route path="/campaigns" element={<Campaigns />} />
-          <Route path="/inbox" element={<Inbox />} />
+          <Route path="*" element={<Navigate to="/leads" replace />} />
         </Routes>
       </main>
     </div>
