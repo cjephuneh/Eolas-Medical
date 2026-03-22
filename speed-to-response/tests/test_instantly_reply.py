@@ -20,9 +20,13 @@ def test_send_email_reply_returns_false_when_missing_to_email():
 def test_send_email_reply_success_when_mocked(monkeypatch):
     from actions import instantly_reply
     monkeypatch.setattr(instantly_reply, "INSTANTLY_API_KEY", "test-key")
-    def mock_post(*args, **kwargs):
+    captured = {}
+
+    def mock_post(url, json=None, **kwargs):
+        captured["json"] = json
         m = type("Response", (), {"status_code": 200, "text": ""})()
         return m
+
     monkeypatch.setattr(requests, "post", mock_post)
     signal = {
         "raw": {
@@ -34,3 +38,7 @@ def test_send_email_reply_success_when_mocked(monkeypatch):
     }
     result = instantly_reply.send_email_reply(signal, "Hi there")
     assert result is True
+    assert captured["json"]["eaccount"] == "us@mail.com"
+    assert captured["json"]["body"]["text"] == "Hi there"
+    assert captured["json"]["reply_to_uuid"] == "u1"
+    assert "subject" in captured["json"]

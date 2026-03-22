@@ -18,11 +18,33 @@ from config import (
 logger = logging.getLogger(__name__)
 
 
+def _reply_subject_line(signal: dict[str, Any], explicit_subject: str) -> str:
+    """Instantly requires a subject; default Re: from raw or thread text."""
+    e = (explicit_subject or "").strip()
+    if e:
+        return e if e.lower().startswith("re:") else f"Re: {e}"
+    raw = signal.get("raw") or {}
+    s = (raw.get("subject") or "").strip()
+    if s:
+        return s if s.lower().startswith("re:") else f"Re: {s}"
+    rt = (signal.get("replyText") or "")
+    for line in rt.split("\n")[:12]:
+        low = line.strip().lower()
+        if low.startswith("subject:"):
+            subj = line.split(":", 1)[1].strip()
+            if subj:
+                return subj if subj.lower().startswith("re:") else f"Re: {subj}"
+    return "Re:"
+
+
 def send_email_reply(signal: dict[str, Any], body: str, subject: str = "") -> bool:
     """
     Send reply via Instantly POST /emails/reply.
-    signal.raw must contain reply_to_uuid, to_email (lead), from_email (our mailbox).
-    Returns True if sent successfully.
+
+    Current API (v2) requires: reply_to_uuid, eaccount (connected mailbox),
+    subject, body: { text and/or html }.
+
+    signal.raw should contain reply_to_uuid, to_email (lead), from_email (our mailbox / eaccount).
     """
     if not INSTANTLY_API_KEY:
         logger.warning("INSTANTLY_API_KEY not set; skipping auto-reply")
@@ -30,22 +52,24 @@ def send_email_reply(signal: dict[str, Any], body: str, subject: str = "") -> bo
     raw = signal.get("raw") or {}
     reply_to_uuid = raw.get("reply_to_uuid") or ""
     to_email = raw.get("to_email") or signal.get("leadName") or ""
-    from_email = (raw.get("from_email") or "").strip() or INSTANTLY_REPLY_FROM_EMAIL.strip()
+    # eaccount = which connected Instantly mailbox sends the reply (same as from_address)
+    eaccount = (raw.get("from_email") or "").strip() or INSTANTLY_REPLY_FROM_EMAIL.strip()
     if not reply_to_uuid or not to_email:
         logger.debug("Missing reply_to_uuid or to_email in signal; skip Instantly reply")
         return False
-    if not from_email:
-        logger.warning("INSTANTLY_REPLY_FROM_EMAIL not set; cannot send auto-reply")
+    if not eaccount:
+        logger.warning(
+            "INSTANTLY_REPLY_FROM_EMAIL or raw.from_email required for eaccount; cannot send reply"
+        )
         return False
+    reply_subject = _reply_subject_line(signal, subject)
     url = f"{INSTANTLY_BASE_URL.rstrip('/')}/emails/reply"
     payload = {
+        "eaccount": eaccount,
         "reply_to_uuid": str(reply_to_uuid),
-        "from_email": from_email,
-        "to_email": to_email,
-        "body": body,
+        "subject": reply_subject,
+        "body": {"text": body},
     }
-    if subject:
-        payload["subject"] = subject
     headers = {
         "Authorization": f"Bearer {INSTANTLY_API_KEY}",
         "Content-Type": "application/json",

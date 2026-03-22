@@ -1,17 +1,32 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type Lead } from "../api";
+import { api, type Lead, type EmailMessage } from "../api";
+
+type InboxTab = "email" | "linkedin";
 
 export function Inbox() {
+  const [tab, setTab] = useState<InboxTab>("email");
+  const [emails, setEmails] = useState<EmailMessage[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
+  const [selectedEmail, setSelectedEmail] = useState<EmailMessage | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [sendResult, setSendResult] = useState<{ ok: boolean; message: string } | null>(null);
   const detailRef = useRef<HTMLDivElement>(null);
 
-  const loadInbox = useCallback(() => {
+  const loadEmailInbox = useCallback(() => {
+    setLoading(true);
+    setError(null);
+    api
+      .inboxEmail(100)
+      .then((e) => setEmails(Array.isArray(e) ? e : []))
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const loadLinkedInbox = useCallback(() => {
     setLoading(true);
     setError(null);
     api
@@ -21,9 +36,20 @@ export function Inbox() {
       .finally(() => setLoading(false));
   }, []);
 
+  const loadInbox = useCallback(() => {
+    if (tab === "email") loadEmailInbox();
+    else loadLinkedInbox();
+  }, [tab, loadEmailInbox, loadLinkedInbox]);
+
   useEffect(() => {
     loadInbox();
   }, [loadInbox]);
+
+  useEffect(() => {
+    setSelectedLead(null);
+    setSelectedEmail(null);
+    setSendResult(null);
+  }, [tab]);
 
   const onSelectLead = (lead: Lead) => {
     setSendResult(null);
@@ -64,11 +90,11 @@ export function Inbox() {
       .finally(() => setSending(false));
   };
 
-  if (loading) {
+  if (loading && emails.length === 0 && leads.length === 0) {
     return (
       <div className="loading-wrap">
         <div className="spinner" aria-hidden />
-        <span>Loading LinkedIn inbox…</span>
+        <span>Loading inbox…</span>
       </div>
     );
   }
@@ -80,148 +106,263 @@ export function Inbox() {
     );
   }
 
-  const list = Array.isArray(leads) ? leads : [];
+  const emailList = Array.isArray(emails) ? emails : [];
+  const leadList = Array.isArray(leads) ? leads : [];
 
   return (
-    <section className="inbox" aria-label="LinkedIn inbox">
+    <section className="inbox" aria-label="Inbox">
       <div className="page-header">
         <div>
           <h1 className="page-title">Inbox</h1>
           <p className="page-subtitle">
-            All LinkedIn messages from Prosp. Run a cycle to pull the latest into this list.
+            {tab === "email"
+              ? "Prospect senders only (Instantly). Rows where From is your mailbox show the external contact as sender. Set EXCLUDE_SENDER_EMAILS or EXCLUDE_SENDER_DOMAINS in .env."
+              : "LinkedIn messages from Prosp. Run a cycle to pull the latest."}
           </p>
         </div>
-        <button
-          type="button"
-          className="btn primary"
-          onClick={loadInbox}
-          disabled={loading}
-          aria-label="Refresh inbox"
-        >
-          Refresh
-        </button>
-      </div>
-      <p className="lead-count">Total: {list.length}</p>
-      {list.length === 0 ? (
-        <div className="table-wrap">
-          <div className="empty-state">
-            No LinkedIn messages yet. Run a cycle to pull replies from Prosp campaigns.
+        <div className="page-header-actions">
+          <div className="inbox-tabs" role="tablist" aria-label="Inbox type">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === "email"}
+              className={tab === "email" ? "tab active" : "tab"}
+              onClick={() => setTab("email")}
+            >
+              Email
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === "linkedin"}
+              className={tab === "linkedin" ? "tab active" : "tab"}
+              onClick={() => setTab("linkedin")}
+            >
+              LinkedIn
+            </button>
           </div>
+          <button
+            type="button"
+            className="btn primary"
+            onClick={loadInbox}
+            disabled={loading}
+            aria-label="Refresh inbox"
+          >
+            {loading ? "Loading…" : "Refresh"}
+          </button>
         </div>
-      ) : (
+      </div>
+
+      {tab === "email" && (
         <>
-          {(selectedLead || detailLoading) && (
-            <div ref={detailRef} className="card wide lead-detail" role="region" aria-label="Lead details">
-              <div className="lead-detail-header">
-                <h3>Lead details</h3>
-                <button
-                  type="button"
-                  className="btn secondary"
-                  onClick={() => {
-                    setSelectedLead(null);
-                    setSendResult(null);
-                  }}
-                  aria-label="Close lead details"
-                >
-                  Close
-                </button>
-              </div>
-              {detailLoading ? (
-                <div className="loading-wrap">
-                  <div className="spinner" aria-hidden />
-                  <span>Loading lead…</span>
-                </div>
-              ) : selectedLead ? (
-                <>
-                  <dl className="lead-detail-dl">
-                    <dt>Name</dt>
-                    <dd>{selectedLead.lead_name || "—"}</dd>
-                    <dt>LinkedIn</dt>
-                    <dd>
-                      {selectedLead.linkedin_url ? (
-                        <a
-                          href={selectedLead.linkedin_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="campaign-lead-link"
-                        >
-                          View profile
-                        </a>
-                      ) : (
-                        "—"
-                      )}
-                    </dd>
-                    <dt>Company</dt>
-                    <dd>{selectedLead.company || "—"}</dd>
-                    <dt>Campaign</dt>
-                    <dd>{selectedLead.campaign || "—"}</dd>
-                    <dt>Their message</dt>
-                    <dd className="lead-detail-reply">{selectedLead.reply_text || "—"}</dd>
-                    <dt>AI-generated reply</dt>
-                    <dd className="lead-detail-suggested">{selectedLead.suggested_response || "—"}</dd>
-                  </dl>
-                  <div className="lead-detail-actions">
+          <p className="lead-count">Total: {emailList.length}</p>
+          {selectedEmail && (
+                <div ref={detailRef} className="card wide lead-detail" role="region" aria-label="Email detail">
+                  <div className="lead-detail-header">
+                    <h3>Email — {selectedEmail.lead_name || selectedEmail.email || "—"}</h3>
                     <button
                       type="button"
-                      className="btn primary"
-                      onClick={handleSendReply}
-                      disabled={sending || !canReply(selectedLead)}
-                      aria-label="Send reply to lead"
+                      className="btn secondary"
+                      onClick={() => setSelectedEmail(null)}
+                      aria-label="Close"
                     >
-                      {sending ? "Sending…" : "Reply"}
+                      Close
                     </button>
-                    {!canReply(selectedLead) && (
-                      <span className="muted">Reply not available (missing LinkedIn URL for this lead).</span>
-                    )}
-                    {sendResult && (
-                      <span className={sendResult.ok ? "send-ok" : "send-error"} role="status">
-                        {sendResult.message}
-                      </span>
-                    )}
                   </div>
-                </>
-              ) : null}
+                  <dl className="lead-detail-dl">
+                    <dt>Sender (respondent)</dt>
+                    <dd>
+                      <a href={`mailto:${selectedEmail.email}`}>{selectedEmail.email || selectedEmail.lead_name || "—"}</a>
+                    </dd>
+                    {selectedEmail.our_mailbox || selectedEmail.from_email ? (
+                      <>
+                        <dt>Your mailbox</dt>
+                        <dd className="muted">{selectedEmail.our_mailbox || selectedEmail.from_email}</dd>
+                      </>
+                    ) : null}
+                    <dt>Company</dt>
+                    <dd>{selectedEmail.company || "—"}</dd>
+                    <dt>Campaign</dt>
+                    <dd>{selectedEmail.campaign || "—"}</dd>
+                    <dt>Date</dt>
+                    <dd>{selectedEmail.timestamp ? new Date(selectedEmail.timestamp).toLocaleString() : "—"}</dd>
+                    <dt>Message</dt>
+                    <dd className="lead-detail-reply">{selectedEmail.reply_text || "—"}</dd>
+                  </dl>
+                </div>
+              )}
+              {emailList.length === 0 ? (
+                <div className="table-wrap">
+                  <div className="empty-state">No email messages. Check Instantly connection and EXCLUDE_SENDER_EMAILS.</div>
+                </div>
+              ) : (
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Sender</th>
+                        <th>Message</th>
+                        <th>Campaign</th>
+                        <th>Date</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {emailList.map((msg) => (
+                        <tr
+                          key={msg.id}
+                          onClick={() => setSelectedEmail(msg)}
+                          className={selectedEmail?.id === msg.id ? "selected" : ""}
+                          role="button"
+                          tabIndex={0}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              setSelectedEmail(msg);
+                            }
+                          }}
+                          aria-label={`View email from ${msg.lead_name || msg.email}`}
+                        >
+                          <td>{msg.email || msg.lead_name || "—"}</td>
+                          <td className="message-preview">
+                            {(msg.reply_text || "").replace(/\s+/g, " ").trim().slice(0, 60)}
+                            {(msg.reply_text || "").length > 60 ? "…" : ""}
+                          </td>
+                          <td>{msg.campaign || "—"}</td>
+                          <td>{msg.timestamp ? new Date(msg.timestamp).toLocaleString() : "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+        </>
+      )}
+
+      {tab === "linkedin" && (
+        <>
+          <p className="lead-count">Total: {leadList.length}</p>
+          {leadList.length === 0 ? (
+            <div className="table-wrap">
+              <div className="empty-state">
+                No LinkedIn messages yet. Run a cycle to pull replies from Prosp campaigns.
+              </div>
             </div>
+          ) : (
+            <>
+              {(selectedLead || detailLoading) && (
+                <div ref={detailRef} className="card wide lead-detail" role="region" aria-label="Lead details">
+                  <div className="lead-detail-header">
+                    <h3>Lead details</h3>
+                    <button
+                      type="button"
+                      className="btn secondary"
+                      onClick={() => {
+                        setSelectedLead(null);
+                        setSendResult(null);
+                      }}
+                      aria-label="Close lead details"
+                    >
+                      Close
+                    </button>
+                  </div>
+                  {detailLoading ? (
+                    <div className="loading-wrap">
+                      <div className="spinner" aria-hidden />
+                      <span>Loading lead…</span>
+                    </div>
+                  ) : selectedLead ? (
+                    <>
+                      <dl className="lead-detail-dl">
+                        <dt>Name</dt>
+                        <dd>{selectedLead.lead_name || "—"}</dd>
+                        <dt>LinkedIn</dt>
+                        <dd>
+                          {selectedLead.linkedin_url ? (
+                            <a
+                              href={selectedLead.linkedin_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="campaign-lead-link"
+                            >
+                              View profile
+                            </a>
+                          ) : (
+                            "—"
+                          )}
+                        </dd>
+                        <dt>Company</dt>
+                        <dd>{selectedLead.company || "—"}</dd>
+                        <dt>Campaign</dt>
+                        <dd>{selectedLead.campaign || "—"}</dd>
+                        <dt>Their message</dt>
+                        <dd className="lead-detail-reply">{selectedLead.reply_text || "—"}</dd>
+                        <dt>AI-generated reply</dt>
+                        <dd className="lead-detail-suggested">{selectedLead.suggested_response || "—"}</dd>
+                      </dl>
+                      <div className="lead-detail-actions">
+                        <button
+                          type="button"
+                          className="btn primary"
+                          onClick={handleSendReply}
+                          disabled={sending || !canReply(selectedLead)}
+                          aria-label="Send reply to lead"
+                        >
+                          {sending ? "Sending…" : "Reply"}
+                        </button>
+                        {!canReply(selectedLead) && (
+                          <span className="muted">Reply not available (missing LinkedIn URL for this lead).</span>
+                        )}
+                        {sendResult && (
+                          <span className={sendResult.ok ? "send-ok" : "send-error"} role="status">
+                            {sendResult.message}
+                          </span>
+                        )}
+                      </div>
+                    </>
+                  ) : null}
+                </div>
+              )}
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Lead</th>
+                      <th>Company</th>
+                      <th>Classification</th>
+                      <th>Notified</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {leadList.map((lead) => (
+                      <tr
+                        key={lead.id}
+                        onClick={() => onSelectLead(lead)}
+                        className={selectedLead?.id === lead.id ? "selected" : ""}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            onSelectLead(lead);
+                          }
+                        }}
+                        aria-label={`View lead ${lead.lead_name}`}
+                      >
+                        <td>{lead.lead_name}</td>
+                        <td>{lead.company || "—"}</td>
+                        <td>
+                          <span className={`badge ${lead.classification}`}>
+                            {(lead.classification || "").replace("_", " ")}
+                          </span>
+                        </td>
+                        <td>{lead.notified_at ? new Date(lead.notified_at).toLocaleString() : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Lead</th>
-                  <th>Company</th>
-                  <th>Classification</th>
-                  <th>Notified</th>
-                </tr>
-              </thead>
-              <tbody>
-                {list.map((lead) => (
-                  <tr
-                    key={lead.id}
-                    onClick={() => onSelectLead(lead)}
-                    className={selectedLead?.id === lead.id ? "selected" : ""}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        onSelectLead(lead);
-                      }
-                    }}
-                    aria-label={`View lead ${lead.lead_name}`}
-                  >
-                    <td>{lead.lead_name}</td>
-                    <td>{lead.company || "—"}</td>
-                    <td>
-                      <span className={`badge ${lead.classification}`}>
-                        {(lead.classification || "").replace("_", " ")}
-                      </span>
-                    </td>
-                    <td>{lead.notified_at ? new Date(lead.notified_at).toLocaleString() : "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
         </>
       )}
     </section>

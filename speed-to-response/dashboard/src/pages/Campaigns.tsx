@@ -15,10 +15,10 @@ export function Campaigns() {
   const [leadsLoading, setLeadsLoading] = useState(false);
   const [leadsError, setLeadsError] = useState<string | null>(null);
   const detailRef = useRef<HTMLDivElement>(null);
-  const [expandedLeadUrl, setExpandedLeadUrl] = useState<string | null>(null);
-  const [draftMessage, setDraftMessage] = useState("");
-  const [sendingLead, setSendingLead] = useState(false);
-  const [generateLoading, setGenerateLoading] = useState(false);
+  const [expandedLeadKey, setExpandedLeadKey] = useState<string | null>(null);
+  const [draftByLead, setDraftByLead] = useState<Record<string, string>>({});
+  const [sendingKey, setSendingKey] = useState<string | null>(null);
+  const [generateKey, setGenerateKey] = useState<string | null>(null);
   const [bulkDescription, setBulkDescription] = useState("");
   const [bulkTemplate, setBulkTemplate] = useState("");
   const [bulkSending, setBulkSending] = useState(false);
@@ -63,29 +63,60 @@ export function Campaigns() {
     setSelectedCampaign(null);
     setLeadsData(null);
     setLeadsError(null);
-    setExpandedLeadUrl(null);
+    setExpandedLeadKey(null);
+    setDraftByLead({});
     setBulkResult(null);
     setBulkTemplate("");
   };
 
-  const handleGenerateForLead = (lead: CampaignLeadWithMessages) => {
-    setGenerateLoading(true);
-    api
-      .generateProspMessage(lead.name || "there", leadsData?.campaign_name || "")
-      .then((r) => setDraftMessage(r.message || ""))
-      .finally(() => setGenerateLoading(false));
+  const leadRowKey = (lead: CampaignLeadWithMessages, idx: number): string => {
+    const u = (lead.linkedin_url || "").trim();
+    return u || `lead-${idx}-${lead.name || "unknown"}`;
   };
 
-  const handleSendToLead = (lead: CampaignLeadWithMessages) => {
-    if (!lead.linkedin_url || !draftMessage.trim()) return;
-    setSendingLead(true);
-    api
-      .sendProspMessage(lead.linkedin_url, draftMessage.trim())
-      .then(() => {
-        setExpandedLeadUrl(null);
-        setDraftMessage("");
+  const handleGenerateForLead = (lead: CampaignLeadWithMessages, idx: number) => {
+    const key = leadRowKey(lead, idx);
+    setGenerateKey(key);
+    const name = lead.name || "there";
+    const campaignName = leadsData?.campaign_name || "";
+    const hasThread = Array.isArray(lead.messages) && lead.messages.length > 0;
+    const gen = hasThread
+      ? api.generateProspReply({
+          name,
+          campaign_name: campaignName,
+          messages: lead.messages.map((m) => ({
+            content: m.content || "",
+            from_me: m.from_me,
+          })),
+        })
+      : api.generateProspMessage(name, campaignName);
+    gen
+      .then((r) => {
+        setDraftByLead((prev) => ({ ...prev, [key]: r.message || "" }));
       })
-      .finally(() => setSendingLead(false));
+      .finally(() => setGenerateKey(null));
+  };
+
+  const handleSendToLead = (lead: CampaignLeadWithMessages, idx: number) => {
+    const key = leadRowKey(lead, idx);
+    const text = (draftByLead[key] || "").trim();
+    if (!lead.linkedin_url || !text) return;
+    setSendingKey(key);
+    api
+      .sendProspMessage(lead.linkedin_url, text)
+      .then(() => {
+        setExpandedLeadKey(null);
+        setDraftByLead((prev) => {
+          const next = { ...prev };
+          delete next[key];
+          return next;
+        });
+      })
+      .finally(() => setSendingKey(null));
+  };
+
+  const setDraftForLead = (key: string, value: string) => {
+    setDraftByLead((prev) => ({ ...prev, [key]: value }));
   };
 
   const handleBulkGenerate = () => {
@@ -126,8 +157,11 @@ export function Campaigns() {
 
   return (
     <section className="campaigns">
-      <h1 className="page-title">Campaigns</h1>
-      <p className="page-subtitle">All Prosp campaigns (api/v1/campaigns/lists). Click a campaign to see leads and comments.</p>
+      <h1 className="page-title">LinkedIn</h1>
+      <p className="page-subtitle">
+        Prosp campaigns: open a campaign to load leads, conversation history from the API, then generate an AI reply
+        (uses the thread when messages are loaded) and send — similar to the Emails page.
+      </p>
       {campaigns.length === 0 ? (
         <div className="card wide">
           <p className="muted">No campaigns or PROSP_API_KEY not set.</p>
@@ -139,11 +173,11 @@ export function Campaigns() {
               ref={detailRef}
               className="card wide campaign-detail"
               role="region"
-              aria-label="Campaign leads and comments"
+              aria-label="Campaign leads and LinkedIn messages"
             >
               <div className="lead-detail-header">
                 <h3>
-                  {selectedCampaign?.campaign_name || "Campaign"} — leads & comments
+                  {selectedCampaign?.campaign_name || "Campaign"} — leads &amp; messages
                 </h3>
                 <button
                   type="button"
@@ -219,8 +253,15 @@ export function Campaigns() {
                     </div>
                   </div>
                 <div className="campaign-leads-list">
-                  {leadsData.leads.map((lead, idx) => (
-                    <div key={lead.linkedin_url || idx} className="campaign-lead-block">
+                  {leadsData.leads.map((lead, idx) => {
+                    const rowKey = leadRowKey(lead, idx);
+                    const isOpen = expandedLeadKey === rowKey;
+                    const draft = draftByLead[rowKey] ?? "";
+                    const isGen = generateKey === rowKey;
+                    const isSend = sendingKey === rowKey;
+                    const hasThread = lead.messages.length > 0;
+                    return (
+                    <div key={rowKey} className="campaign-lead-block">
                       <div className="campaign-lead-head">
                         <strong>{lead.name || "—"}</strong>
                         {lead.company && (
@@ -243,50 +284,32 @@ export function Campaigns() {
                             className="btn small"
                             onClick={(e) => {
                               e.stopPropagation();
-                              setExpandedLeadUrl(expandedLeadUrl === lead.linkedin_url ? null : lead.linkedin_url);
-                              if (expandedLeadUrl !== lead.linkedin_url) setDraftMessage("");
+                              setExpandedLeadKey(isOpen ? null : rowKey);
                             }}
-                            aria-label={`Send message to ${lead.name}`}
+                            aria-expanded={isOpen}
+                            aria-label={isOpen ? `Close reply composer for ${lead.name}` : `Reply to ${lead.name}`}
                           >
-                            Send message
+                            {isOpen ? "Hide reply" : "Reply"}
                           </button>
                         )}
                       </div>
-                      {expandedLeadUrl === lead.linkedin_url && (
-                        <div className="campaign-lead-compose">
-                          <button
-                            type="button"
-                            className="btn secondary"
-                            onClick={() => handleGenerateForLead(lead)}
-                            disabled={generateLoading}
-                            aria-label="Generate with AI"
-                          >
-                            {generateLoading ? "Generating…" : "Generate with AI"}
-                          </button>
-                          <textarea
-                            className="campaign-compose-input"
-                            placeholder="Message (starts with Hello [name])"
-                            value={draftMessage}
-                            onChange={(e) => setDraftMessage(e.target.value)}
-                            rows={4}
-                            aria-label="Message to send"
-                          />
-                          <div className="campaign-compose-actions">
-                            <button
-                              type="button"
-                              className="btn primary"
-                              onClick={() => handleSendToLead(lead)}
-                              disabled={sendingLead || !draftMessage.trim()}
-                              aria-label="Send message"
-                            >
-                              {sendingLead ? "Sending…" : "Send"}
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                      <ul className="campaign-messages">
+                      <ul className="campaign-messages" aria-label={`Conversation with ${lead.name}`}>
                         {lead.messages.length === 0 ? (
-                          <li className="muted">No messages</li>
+                          <li className="campaign-messages-empty">
+                            <p>
+                              <strong>No conversation history</strong> — Prosp returned no messages for this lead
+                              (new lead, no DMs yet, or the API couldn’t read the thread).
+                            </p>
+                            <p className="muted small">
+                              If you expected messages here: set{" "}
+                              <code>PROSP_SENDER</code> in <code>.env</code> to your LinkedIn profile URL (the Prosp
+                              sender account), restart the API, and open this campaign again.
+                            </p>
+                            <p className="muted small">
+                              You can still use <strong>Reply</strong> below — type manually or use{" "}
+                              <strong>Generate with AI</strong> for an intro-style message.
+                            </p>
+                          </li>
                         ) : (
                           lead.messages.map((msg, midx) => (
                             <li
@@ -301,8 +324,52 @@ export function Campaigns() {
                           ))
                         )}
                       </ul>
+                      {lead.linkedin_url && isOpen && (
+                        <div className="campaign-lead-compose">
+                          <p className="muted small campaign-compose-hint">
+                            {hasThread
+                              ? "Generate with AI uses the conversation above for a contextual reply."
+                              : "No thread loaded — Generate with AI writes a short intro (like a cold outreach). Edit before sending."}
+                          </p>
+                          <div className="campaign-compose-actions">
+                            <button
+                              type="button"
+                              className="btn secondary"
+                              onClick={() => handleGenerateForLead(lead, idx)}
+                              disabled={isGen}
+                              aria-label={
+                                hasThread
+                                  ? "Generate reply with AI using conversation thread"
+                                  : "Generate intro message with AI"
+                              }
+                            >
+                              {isGen ? "Generating…" : "Generate with AI"}
+                            </button>
+                          </div>
+                          <textarea
+                            className="campaign-compose-input"
+                            placeholder="Your LinkedIn message — edit after generating"
+                            value={draft}
+                            onChange={(e) => setDraftForLead(rowKey, e.target.value)}
+                            rows={8}
+                            aria-label={`Message to ${lead.name}`}
+                          />
+                          <div className="campaign-compose-actions">
+                            <button
+                              type="button"
+                              className="btn primary"
+                              onClick={() => handleSendToLead(lead, idx)}
+                              disabled={isSend || !draft.trim()}
+                              aria-label={`Send LinkedIn message to ${lead.name}`}
+                            >
+                              {isSend ? "Sending…" : "Send"}
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
                 </>
               ) : (

@@ -1,7 +1,7 @@
 """Tests for store: idempotency and append."""
 import pytest
 
-from store import append, get_all, is_processed
+from store import append, get_all, is_processed, mark_replied
 
 
 def test_is_processed_empty():
@@ -39,3 +39,26 @@ def test_get_all():
     records = get_all()
     assert len(records) >= 1
     assert any(r["id"] == "instantly:1" for r in records)
+
+
+def test_mark_replied_sets_timestamp():
+    append(
+        signal_id="instantly:reply-test",
+        channel="email",
+        lead_name="B",
+        company="D",
+        campaign="Y",
+        reply_text="Hi",
+        classification="interested",
+        suggested_response="Ok",
+        notified_at="2026-02-27T12:00:00Z",
+    )
+    ts = mark_replied("instantly:reply-test")
+    assert ts is not None
+    assert ts.endswith("Z")
+    rec = next(r for r in get_all() if r["id"] == "instantly:reply-test")
+    assert rec.get("replied_at") == ts
+
+
+def test_mark_replied_unknown_id():
+    assert mark_replied("instantly:does-not-exist-xyz") is None

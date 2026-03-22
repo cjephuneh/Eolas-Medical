@@ -35,6 +35,10 @@ export interface Lead {
   linkedin_url?: string;
   reply_to_uuid?: string;
   from_email?: string;
+  /** Email thread subject (Instantly) */
+  subject?: string;
+  /** Set when a reply was sent from the dashboard (UTC ISO from server). */
+  replied_at?: string;
 }
 
 export interface SourcesResponse {
@@ -86,6 +90,26 @@ export interface LeadsResponse {
   leads?: Lead[];
 }
 
+export interface EmailMessage {
+  id: string;
+  channel: string;
+  lead_name: string;
+  email: string;
+  company: string;
+  campaign: string;
+  reply_text: string;
+  timestamp: string;
+  reply_to_uuid?: string;
+  from_email?: string;
+  /** Our mailbox when Instantly lists From=mailbox / To=prospect */
+  our_mailbox?: string;
+}
+
+export interface InboxEmailResponse {
+  count?: number;
+  emails?: EmailMessage[];
+}
+
 export const api = {
   health: () => request<Health>("/health"),
   index: () => request<Endpoints>("/"),
@@ -104,6 +128,17 @@ export const api = {
     request<{ message: string }>("/prosp/generate-message", {
       method: "POST",
       body: JSON.stringify({ name, context }),
+    }),
+  /** AI reply using LinkedIn thread (messages from Prosp); same idea as email suggested reply. */
+  generateProspReply: (body: {
+    name: string;
+    campaign_name?: string;
+    messages?: Array<{ content: string; from_me?: boolean }>;
+    thread_context?: string;
+  }) =>
+    request<{ message: string }>("/prosp/generate-reply", {
+      method: "POST",
+      body: JSON.stringify(body),
     }),
   sendProspMessage: (linkedinUrl: string, message: string) =>
     request<{ status: string }>("/prosp/send-message", {
@@ -126,15 +161,23 @@ export const api = {
         body: JSON.stringify({ message_template: messageTemplate }),
       }
     ),
+  inboxEmail: async (limit?: number): Promise<EmailMessage[]> => {
+    const q = limit != null ? `?limit=${limit}` : "";
+    const res = await request<InboxEmailResponse>(`/inbox/email${q}`);
+    return Array.isArray(res.emails) ? res.emails : [];
+  },
   inboxLinkedin: async (): Promise<Lead[]> => {
     const res = await request<LeadsResponse>("/inbox/linkedin");
     return Array.isArray(res.leads) ? res.leads : [];
   },
   lead: (id: string) => request<Lead>(`/leads/${encodeURIComponent(id)}`),
   sendReply: (id: string, body: string, subject?: string) =>
-    request<{ status: string; message: string; channel: string }>(`/leads/${encodeURIComponent(id)}/send-reply`, {
-      method: "POST",
-      body: JSON.stringify({ body, subject }),
-    }),
+    request<{ status: string; message: string; channel: string; replied_at?: string }>(
+      `/leads/${encodeURIComponent(id)}/send-reply`,
+      {
+        method: "POST",
+        body: JSON.stringify({ body, subject }),
+      }
+    ),
   runCycle: () => request<{ status: string; counts: RunCycleCounts }>("/run-cycle", { method: "POST" }),
 };

@@ -13,7 +13,7 @@ from poll.prosp import get_unread_signals as get_prosp_signals
 from poll.prosp import get_prosp_signals_via_campaigns
 from suggest_reply import suggest_reply
 from notify.slack import send_alert as send_slack_alert
-from store import is_processed, append
+from store import append, is_processed, mark_replied
 from actions.instantly_reply import send_email_reply
 from actions.prosp_reply import send_linkedin_reply
 
@@ -94,12 +94,14 @@ def run_cycle() -> dict[str, int]:
             suggested = _personalize_suggested(suggested, signal.get("leadName") or "")
             if send_slack_alert(signal, suggested):
                 counts["notified"] += 1
-            if signal.get("channel") == "email" and AUTO_REPLY_EMAIL:
-                subject = (signal.get("raw") or {}).get("subject") or ""
-                send_email_reply(signal, suggested, subject=subject)
-            if signal.get("channel") == "linkedin" and AUTO_REPLY_LINKEDIN:
+            auto_replied_ok = False
+            ch = (signal.get("channel") or "").lower()
+            if ch == "email" and AUTO_REPLY_EMAIL:
+                subj = (signal.get("raw") or {}).get("subject") or ""
+                auto_replied_ok = bool(send_email_reply(signal, suggested, subject=subj))
+            elif ch == "linkedin" and AUTO_REPLY_LINKEDIN:
                 linkedin_message = _suggested_to_linkedin_message(suggested)
-                send_linkedin_reply(signal, linkedin_message)
+                auto_replied_ok = bool(send_linkedin_reply(signal, linkedin_message))
             raw = signal.get("raw") or {}
             append(
                 signal_id=signal_id,
@@ -115,7 +117,10 @@ def run_cycle() -> dict[str, int]:
                 linkedin_url=raw.get("linkedin_url") or "",
                 reply_to_uuid=raw.get("reply_to_uuid") or "",
                 from_email=raw.get("from_email") or "",
+                subject=raw.get("subject") or "",
             )
+            if auto_replied_ok:
+                mark_replied(signal_id)
         else:
             raw = signal.get("raw") or {}
             append(
@@ -132,6 +137,7 @@ def run_cycle() -> dict[str, int]:
                 linkedin_url=raw.get("linkedin_url") or "",
                 reply_to_uuid=raw.get("reply_to_uuid") or "",
                 from_email=raw.get("from_email") or "",
+                subject=raw.get("subject") or "",
             )
 
     return counts

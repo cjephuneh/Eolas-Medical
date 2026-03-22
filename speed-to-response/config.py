@@ -68,6 +68,36 @@ _EXCLUDE_SENDER_RAW = _get("EXCLUDE_SENDER_EMAILS", "").strip()
 EXCLUDE_SENDER_EMAILS: frozenset[str] = frozenset(
     e.strip().lower() for e in _EXCLUDE_SENDER_RAW.split(",") if e.strip()
 )
+# Optional: treat any address ending with these domains as “our” mailboxes (e.g. @mail.teameolasmedical.com)
+_EXCLUDE_DOM_RAW = _get("EXCLUDE_SENDER_DOMAINS", "").strip()
+EXCLUDE_SENDER_DOMAINS: frozenset[str] = frozenset(
+    d.strip().lower().lstrip("@") for d in _EXCLUDE_DOM_RAW.split(",") if d.strip()
+)
+
+
+def is_our_sending_address(addr: str) -> bool:
+    """True if this email is one of our mailboxes (exact list and/or domain list).
+
+    Domain list matches subdomains: e.g. teameolasmedical.com matches
+    outreach.tryeolasmedical.com and connect.teameolasmedical.com (not only @teameolasmedical.com).
+    """
+    a = (addr or "").strip().lower()
+    if not a:
+        return False
+    if EXCLUDE_SENDER_EMAILS and a in EXCLUDE_SENDER_EMAILS:
+        return True
+    if "@" not in a:
+        return False
+    _, _, domain = a.partition("@")
+    if not domain:
+        return False
+    if not EXCLUDE_SENDER_DOMAINS:
+        return False
+    for d in EXCLUDE_SENDER_DOMAINS:
+        dom = d.lower().lstrip("@")
+        if domain == dom or domain.endswith("." + dom):
+            return True
+    return False
 
 
 def validate_config() -> list[str]:

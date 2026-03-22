@@ -259,6 +259,44 @@
   margin-bottom: 1rem;
 }
 
+.page-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.inbox-tabs {
+  display: flex;
+  gap: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.inbox-tabs .tab {
+  padding: 0.5rem 1rem;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+
+.inbox-tabs .tab:hover {
+  color: #334155;
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.inbox-tabs .tab.active {
+  background: #fff;
+  color: #4f46e5;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
 .lead-count {
   font-size: 0.9375rem;
   color: #64748b;
@@ -378,6 +416,81 @@ tbody tr:hover td {
   border: 1px solid #e2e8f0;
 }
 
+.lead-detail-reply-edit-wrap {
+  grid-column: 1 / -1;
+}
+
+@media (min-width: 640px) {
+  .lead-detail-reply-edit-wrap {
+    grid-column: 2;
+  }
+}
+
+.lead-detail-reply-textarea {
+  width: 100%;
+  min-height: 10rem;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  color: #334155;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 0.75rem;
+  background: #fff;
+  border-radius: 8px;
+  border: 1px solid #cbd5e1;
+  resize: vertical;
+}
+
+.lead-detail-reply-textarea:focus {
+  outline: 2px solid #818cf8;
+  outline-offset: 2px;
+  border-color: #6366f1;
+}
+
+.lead-detail-reply-textarea:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.reply-edit-hint {
+  margin: 0.5rem 0 0.75rem;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+}
+
+.btn-reset-reply {
+  margin-top: 0.25rem;
+}
+
+.lead-detail-signoff {
+  padding: 0.75rem;
+  background: linear-gradient(180deg, #faf5ff 0%, #f8fafc 100%);
+  border-radius: 8px;
+  border: 1px solid #e9d5ff;
+}
+
+.lead-detail-signoff .signoff-line {
+  display: block;
+  font-size: 0.9375rem;
+  color: #475569;
+  margin-bottom: 0.25rem;
+}
+
+.lead-detail-signoff .signoff-name {
+  display: block;
+  font-weight: 600;
+  color: #4f46e5;
+  font-size: 1rem;
+}
+
+.lead-detail-signoff .small-hint {
+  margin: 0.75rem 0 0;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+}
+
 .lead-detail-actions {
   display: flex;
   align-items: center;
@@ -430,6 +543,53 @@ tbody tr:hover td {
   color: #3730a3;
 }
 
+.badge.replied {
+  background: #d1fae5;
+  color: #065f46;
+  text-transform: none;
+}
+
+.badge.pending-reply {
+  background: #fef3c7;
+  color: #92400e;
+  text-transform: none;
+}
+
+.badge.replied .replied-at {
+  font-weight: 500;
+  opacity: 0.9;
+}
+
+.leads-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.lead-count-sep {
+  color: #94a3b8;
+}
+
+.lead-filter-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.btn.filter-tab.active {
+  background: #4f46e5;
+  color: #fff;
+  border-color: #4338ca;
+}
+
+.btn.filter-tab.active:hover:not(:disabled) {
+  background: #4338ca;
+  border-color: #3730a3;
+}
+
 .campaign-id {
   font-size: 0.8125rem;
   background: #f1f5f9;
@@ -462,6 +622,39 @@ tbody tr:hover td {
   background: #f8fafc;
   border-radius: 12px;
   border: 1px solid #e2e8f0;
+}
+
+.campaign-compose-hint {
+  margin: 0 0 0.75rem;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+
+.campaign-messages-empty {
+  list-style: none;
+  padding: 0.75rem 1rem;
+  margin: 0;
+  background: #f8fafc;
+  border-radius: 8px;
+  border: 1px dashed #cbd5e1;
+}
+
+.campaign-messages-empty p {
+  margin: 0 0 0.5rem;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: #475569;
+}
+
+.campaign-messages-empty p:last-child {
+  margin-bottom: 0;
+}
+
+.campaign-messages-empty code {
+  font-size: 0.8em;
+  background: #e2e8f0;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
 }
 
 .campaign-lead-head strong {

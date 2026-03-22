@@ -133,7 +133,7 @@ Cursor-based. Use `starting_after` param with the last item's ID. Check if respo
 | List | GET | `/emails` | `?campaign_id=&lead_email=&search=&limit=&starting_after=&is_read=` |
 | Get | GET | `/emails/{id}` | — |
 | Delete | DELETE | `/emails/{id}` | — |
-| Reply | POST | `/emails/reply` | `{reply_to_uuid, from_email, to_email, body, subject?, cc?, bcc?}` |
+| Reply | POST | `/emails/reply` | `{reply_to_uuid, eaccount, subject, body: {text, html?}}` (see Instantly API v2) |
 | Forward | POST | `/emails/forward` | `{forward_uuid, from_email, to_email, subject?, body?}` |
 | Mark Read | POST | `/emails/threads/{thread_id}/mark-as-read` | — |
 | Unread Count | GET | `/emails/unread/count` | — |

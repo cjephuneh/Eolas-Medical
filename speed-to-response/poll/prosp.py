@@ -269,20 +269,52 @@ def normalize_conversation_to_signal(conv: dict[str, Any]) -> Signal:
     }
 
 
+def _looks_like_message_dict(d: dict[str, Any]) -> bool:
+    """True if dict plausibly represents one chat message."""
+    if not isinstance(d, dict):
+        return False
+    text_keys = (
+        "content", "text", "body", "message", "value", "snippet", "msg",
+        "content_text", "message_text", "plain_text", "message_body",
+    )
+    if any(d.get(k) not in (None, "") for k in text_keys):
+        return True
+    nested = d.get("message") or d.get("content")
+    if isinstance(nested, dict):
+        return any(nested.get(k) not in (None, "") for k in ("text", "body", "content"))
+    if isinstance(nested, str) and nested.strip():
+        return True
+    meta_keys = ("from_me", "is_from_me", "direction", "sender", "sender_type", "role", "created_at", "timestamp")
+    return any(k in d for k in meta_keys)
+
+
 def _looks_like_message_list(items: list[Any]) -> bool:
-    """True if items look like message objects (have content/text/body or similar)."""
+    """True if list looks like chat messages (majority dicts with message-like fields)."""
     if not items or not isinstance(items, list):
         return False
-    first = items[0] if items else None
-    if not isinstance(first, dict):
+    dicts = [x for x in items if isinstance(x, dict)]
+    if not dicts:
         return False
-    return any(
-        first.get(k) is not None
-        for k in (
-            "content", "text", "body", "message", "value",
-            "content_text", "message_text", "created_at", "timestamp", "from_me", "sender",
-        )
-    )
+    sample = dicts[: min(5, len(dicts))]
+    ok = sum(1 for d in sample if _looks_like_message_dict(d))
+    return ok >= max(1, len(sample) // 2) or (len(sample) == 1 and ok == 1)
+
+
+def _deep_find_message_lists(obj: Any, depth: int = 0, max_depth: int = 6) -> list[list[dict[str, Any]]]:
+    """Find nested lists of message-like dicts (Prosp response shapes vary)."""
+    found: list[list[dict[str, Any]]] = []
+    if depth > max_depth or obj is None:
+        return found
+    if isinstance(obj, list):
+        if obj and all(isinstance(x, dict) for x in obj) and _looks_like_message_list(obj):
+            found.append(obj)  # type: ignore[list-item]
+        else:
+            for item in obj:
+                found.extend(_deep_find_message_lists(item, depth + 1, max_depth))
+    elif isinstance(obj, dict):
+        for val in obj.values():
+            found.extend(_deep_find_message_lists(val, depth + 1, max_depth))
+    return found
 
 
 def _extract_messages_from_conversation(raw: dict[str, Any] | list[Any] | None) -> list[dict[str, Any]]:
@@ -298,6 +330,7 @@ def _extract_messages_from_conversation(raw: dict[str, Any] | list[Any] | None) 
         "messages", "data", "conversation", "thread", "thread_messages",
         "conversation_messages", "items", "results", "chat_messages",
         "messageList", "message_list", "conversationMessages",
+        "history", "chat_history", "chatHistory", "dm_messages", "direct_messages",
     ]
     for key in candidates:
         val = raw.get(key)
@@ -306,11 +339,14 @@ def _extract_messages_from_conversation(raw: dict[str, Any] | list[Any] | None) 
                 return val
             continue
         if isinstance(val, dict):
-            for inner_key in ("messages", "data", "items", "results", "thread", "conversation"):
+            for inner_key in ("messages", "data", "items", "results", "thread", "conversation", "history"):
                 inner = val.get(inner_key)
                 if isinstance(inner, list) and _looks_like_message_list(inner):
                     return inner
-    # Last resort: walk all values and return first list that looks like messages
+            # Single nested object that is itself one message
+            if _looks_like_message_dict(val):
+                return [val]
+    # Last resort: shallow walk
     for val in raw.values():
         if isinstance(val, list) and _looks_like_message_list(val):
             return val
@@ -318,32 +354,65 @@ def _extract_messages_from_conversation(raw: dict[str, Any] | list[Any] | None) 
             for inner in (val.get("messages"), val.get("data"), val.get("items")):
                 if isinstance(inner, list) and _looks_like_message_list(inner):
                     return inner
+    # Deep walk: pick longest plausible message list
+    deep = _deep_find_message_lists(raw)
+    if deep:
+        deep.sort(key=len, reverse=True)
+        return deep[0]
     return []
 
 
 def _normalize_message_for_display(msg: dict[str, Any]) -> dict[str, Any]:
     """Extract content, sender label, and timestamp from a raw message for UI display."""
+    nested = msg.get("message") or msg.get("content")
     content = (
         msg.get("content")
         or msg.get("text")
         or msg.get("body")
         or msg.get("message")
+        or msg.get("snippet")
+        or msg.get("msg")
         or msg.get("content_text")
         or msg.get("message_text")
         or msg.get("value")
+        or msg.get("plain_text")
         or ""
     )
     if content is None:
         content = ""
     if isinstance(content, dict):
         content = content.get("text") or content.get("body") or content.get("content") or str(content)
-    created = msg.get("created_at") or msg.get("timestamp") or msg.get("date") or msg.get("sent_at") or ""
+    if isinstance(nested, dict) and not str(content).strip():
+        content = nested.get("text") or nested.get("body") or nested.get("content") or ""
+    if isinstance(nested, str) and not str(content).strip():
+        content = nested
+    created = (
+        msg.get("created_at")
+        or msg.get("timestamp")
+        or msg.get("date")
+        or msg.get("sent_at")
+        or msg.get("createdAt")
+        or msg.get("updated_at")
+        or ""
+    )
     from_me = msg.get("from_me") if isinstance(msg.get("from_me"), bool) else None
+    if from_me is None:
+        st = str(msg.get("sender_type") or msg.get("role") or "").lower()
+        if st in ("user", "me", "self", "outbound", "sender"):
+            from_me = True
+        elif st in ("lead", "recipient", "inbound", "contact"):
+            from_me = False
+    if from_me is None:
+        dir_ = str(msg.get("direction") or "").lower()
+        if dir_ in ("inbound", "incoming", "received"):
+            from_me = False
+        elif dir_ in ("outbound", "outgoing", "sent"):
+            from_me = True
     if from_me is None:
         from_me = (
             msg.get("sender") == "me"
-            or (msg.get("direction") or "").lower() in ("outbound", "outgoing", "sent")
             or msg.get("is_from_me") is True
+            or msg.get("is_outgoing") is True
         )
     return {"content": str(content)[:5000], "from_me": bool(from_me), "created_at": str(created)}
 

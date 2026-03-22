@@ -11,20 +11,39 @@ import os
 from apscheduler.schedulers.background import BackgroundScheduler
 from flask import Flask, Response, jsonify, request
 
-from config import EXCLUDE_SENDER_EMAILS, SLACK_CHANNEL_ID
+from config import INSTANTLY_REPLY_FROM_EMAIL, is_our_sending_address, SLACK_CHANNEL_ID
+
+
+def _enrich_email_lead_for_reply(lead: dict) -> dict:
+    """Fill missing Instantly reply fields: infer reply_to_uuid from id, default from_email, copy email from lead_name."""
+    out = dict(lead)
+    if (out.get("channel") or "").lower() != "email":
+        return out
+    lid = str(out.get("id") or "")
+    if not (out.get("reply_to_uuid") or "").strip() and lid.startswith("instantly:"):
+        suffix = lid.split(":", 1)[1].strip()
+        if suffix:
+            out["reply_to_uuid"] = suffix
+    if not (out.get("from_email") or "").strip():
+        fe = (INSTANTLY_REPLY_FROM_EMAIL or "").strip()
+        if fe:
+            out["from_email"] = fe
+    if not (out.get("email") or "").strip():
+        ln = (out.get("lead_name") or "").strip()
+        if "@" in ln and not is_our_sending_address(ln):
+            out["email"] = ln
+    return out
 
 
 def _filter_excluded_senders(records: list[dict]) -> list[dict]:
-    """Drop any lead whose sender (lead_name/email) is one of our sending mailboxes."""
-    if not EXCLUDE_SENDER_EMAILS:
-        return records
+    """Drop any lead whose sender (lead_name and/or email) is our mailbox / org domain."""
     out = []
     for r in records:
-        sender = (
-            (r.get("lead_name") or "").strip().lower()
-            or (r.get("email") or "").strip().lower()
-        )
-        if sender and sender in EXCLUDE_SENDER_EMAILS:
+        ln = (r.get("lead_name") or "").strip()
+        em = (r.get("email") or "").strip()
+        if ln and is_our_sending_address(ln):
+            continue
+        if em and is_our_sending_address(em):
             continue
         out.append(r)
     return out
@@ -74,6 +93,8 @@ def index() -> tuple[dict, int]:
             "sources": "/sources",
             "sources_debug": "/sources/debug",
             "campaigns": "/campaigns (GET — all Prosp campaigns from api/v1/campaigns/lists)",
+            "prosp_generate_reply": "/prosp/generate-reply (POST — AI LinkedIn reply using thread messages)",
+            "inbox_email": "/inbox/email (GET — all email messages from all inboxes)",
             "inbox_linkedin": "/inbox/linkedin (GET — LinkedIn messages only)",
             "leads": "/leads (GET, JSON; ?format=csv for CSV)",
             "leads_export": "/leads/export (GET, CSV download; ?send_to_slack=1 to also upload to Slack)",
@@ -180,6 +201,28 @@ def prosp_generate_message() -> tuple[dict, int]:
         return jsonify({"message": message}), 200
     except Exception as e:
         logger.exception("prosp_generate_message failed: %s", e)
+        return jsonify({"error": "GENERATE_FAILED", "message": str(e)}), 500
+
+
+@app.route("/prosp/generate-reply", methods=["POST"])
+def prosp_generate_reply() -> tuple[dict, int]:
+    """
+    Generate a LinkedIn follow-up using thread context (like email suggested reply).
+    Body: { \"name\", \"campaign_name\"?, \"messages\": [{ \"content\", \"from_me\" }], \"thread_context\"? }.
+    """
+    try:
+        from suggest_reply import format_prosp_thread_for_prompt, generate_linkedin_message
+        data = request.get_json() or {}
+        name = (data.get("name") or "").strip() or "there"
+        campaign = (data.get("campaign_name") or data.get("context") or "").strip()
+        thread_raw = (data.get("thread_context") or "").strip()
+        messages = data.get("messages")
+        if not thread_raw and isinstance(messages, list):
+            thread_raw = format_prosp_thread_for_prompt(messages)
+        message = generate_linkedin_message(name, campaign, thread_context=thread_raw)
+        return jsonify({"message": message}), 200
+    except Exception as e:
+        logger.exception("prosp_generate_reply failed: %s", e)
         return jsonify({"error": "GENERATE_FAILED", "message": str(e)}), 500
 
 
@@ -346,6 +389,38 @@ def sources_debug() -> tuple[dict, int]:
     return jsonify(out), 200
 
 
+@app.route("/inbox/email", methods=["GET", "OPTIONS"])
+def inbox_email() -> tuple[dict, int] | tuple[Response, int]:
+    """Return all email messages from Instantly (all inboxes, read + unread). Excludes sending mailboxes."""
+    if request.method == "OPTIONS":
+        return _cors_response(Response(status=204)), 204
+    try:
+        from poll.instantly import get_all_email_signals
+        limit = min(int(request.args.get("limit", "100") or "100"), 200)
+        signals = get_all_email_signals(limit=limit)
+    except Exception as e:
+        logger.exception("inbox_email failed: %s", e)
+        return jsonify({"error": "INBOX_EMAIL_FAILED", "message": str(e)}), 500
+    emails = []
+    for s in signals:
+        raw = s.get("raw") or {}
+        respondent = raw.get("respondent_email") or raw.get("to_email") or s.get("leadName", "")
+        emails.append({
+            "id": s.get("id", ""),
+            "channel": "email",
+            "lead_name": respondent,
+            "email": respondent,
+            "company": s.get("company", ""),
+            "campaign": s.get("campaignOrSequence", ""),
+            "reply_text": s.get("replyText", ""),
+            "timestamp": s.get("timestamp", ""),
+            "reply_to_uuid": raw.get("reply_to_uuid", ""),
+            "from_email": raw.get("from_email", ""),
+            "our_mailbox": raw.get("our_mailbox", ""),
+        })
+    return jsonify({"count": len(emails), "emails": emails}), 200
+
+
 @app.route("/inbox/linkedin", methods=["GET", "OPTIONS"])
 def inbox_linkedin() -> tuple[dict, int] | tuple[Response, int]:
     """Return all LinkedIn leads (from store). Same as /leads but filtered to channel=linkedin; excludes sending mailboxes."""
@@ -370,9 +445,10 @@ def leads() -> tuple[dict, int] | Response:
     except Exception as e:
         logger.exception("leads get_all failed: %s", e)
         return jsonify({"error": "LEADS_LOAD_FAILED", "message": str(e)}), 500
+    enriched = [_enrich_email_lead_for_reply(r) for r in records]
     if request.args.get("format") == "csv":
-        return _leads_csv_response(records)
-    return jsonify({"count": len(records), "leads": records}), 200
+        return _leads_csv_response(enriched)
+    return jsonify({"count": len(enriched), "leads": enriched}), 200
 
 
 @app.route("/leads/<lead_id>", methods=["GET"])
@@ -387,13 +463,13 @@ def lead_by_id(lead_id: str) -> tuple[dict, int]:
     lead = next((r for r in records if str(r.get("id", "")) == str(lead_id)), None)
     if not lead:
         return jsonify({"error": "NOT_FOUND", "message": "Lead not found"}), 404
-    return jsonify(lead), 200
+    return jsonify(_enrich_email_lead_for_reply(lead)), 200
 
 
 @app.route("/leads/<lead_id>/send-reply", methods=["POST"])
 def lead_send_reply(lead_id: str) -> tuple[dict, int]:
     """Send reply for a lead (email via Instantly or LinkedIn via Prosp). Body: optional { \"body\": \"...\" } or use stored suggested_response."""
-    from store import get_all
+    from store import get_all, mark_replied
     from actions.instantly_reply import send_email_reply
     from actions.prosp_reply import send_linkedin_reply
     from run_cycle import _suggested_to_linkedin_message
@@ -405,22 +481,32 @@ def lead_send_reply(lead_id: str) -> tuple[dict, int]:
     lead = next((r for r in records if str(r.get("id", "")) == str(lead_id)), None)
     if not lead:
         return jsonify({"error": "NOT_FOUND", "message": "Lead not found"}), 404
+    lead = _enrich_email_lead_for_reply(lead)
     data = request.get_json() or {}
     body = (data.get("body") or "").strip() or (lead.get("suggested_response") or "").strip()
     if not body:
         return jsonify({"error": "NO_BODY", "message": "No reply body and no stored suggested_response"}), 400
     channel = lead.get("channel") or ""
     if channel == "email":
-        reply_to_uuid = lead.get("reply_to_uuid") or ""
-        to_email = lead.get("email") or lead.get("lead_name") or ""
-        from_email = lead.get("from_email") or ""
+        reply_to_uuid = (lead.get("reply_to_uuid") or "").strip()
+        to_email = (lead.get("email") or lead.get("lead_name") or "").strip()
+        from_email = (lead.get("from_email") or "").strip()
         if not reply_to_uuid or not to_email:
             return jsonify({
                 "error": "REPLY_NOT_AVAILABLE",
-                "message": "Email reply metadata missing (reply_to_uuid or email). Lead may have been stored before this was saved.",
+                "message": "Email reply metadata missing (reply_to_uuid or recipient email). Re-run a cycle or set INSTANTLY_REPLY_FROM_EMAIL.",
             }), 400
-        signal = {"leadName": lead.get("lead_name"), "raw": {"reply_to_uuid": reply_to_uuid, "to_email": to_email, "from_email": from_email}}
-        subject = (data.get("subject") or "").strip()
+        signal = {
+            "leadName": lead.get("lead_name"),
+            "replyText": lead.get("reply_text") or "",
+            "raw": {
+                "reply_to_uuid": reply_to_uuid,
+                "to_email": to_email,
+                "from_email": from_email,
+                "subject": (lead.get("subject") or "").strip(),
+            },
+        }
+        subject = (data.get("subject") or "").strip() or (lead.get("subject") or "").strip()
         ok = send_email_reply(signal, body, subject=subject)
     elif channel == "linkedin":
         linkedin_url = lead.get("linkedin_url") or ""
@@ -435,7 +521,15 @@ def lead_send_reply(lead_id: str) -> tuple[dict, int]:
     else:
         return jsonify({"error": "UNSUPPORTED_CHANNEL", "message": f"Channel {channel} has no send-reply implementation"}), 400
     if ok:
-        return jsonify({"status": "ok", "message": "Reply sent", "channel": channel}), 200
+        replied_at = mark_replied(lead_id)
+        return jsonify(
+            {
+                "status": "ok",
+                "message": "Reply sent",
+                "channel": channel,
+                "replied_at": replied_at or "",
+            }
+        ), 200
     return jsonify({"error": "SEND_FAILED", "message": "See server logs"}), 502
 
 
@@ -480,7 +574,7 @@ def _leads_csv_string(records: list[dict]) -> str:
     writer = csv.writer(out)
     writer.writerow([
         "id", "channel", "lead_name", "company", "campaign", "classification",
-        "reply_text", "suggested_response", "notified_at",
+        "reply_text", "suggested_response", "notified_at", "replied_at",
     ])
     for r in records:
         writer.writerow([
@@ -493,6 +587,7 @@ def _leads_csv_string(records: list[dict]) -> str:
             (r.get("reply_text") or "").replace("\r", " ").replace("\n", " "),
             (r.get("suggested_response") or "").replace("\r", " ").replace("\n", " "),
             r.get("notified_at", ""),
+            r.get("replied_at", ""),
         ])
     return out.getvalue()
 

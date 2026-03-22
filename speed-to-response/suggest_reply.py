@@ -125,41 +125,91 @@ def _first_name(full_name: str) -> str:
     return str(full_name).strip().split()[0]
 
 
-def generate_linkedin_message(lead_name: str, context: str = "") -> str:
+def format_prosp_thread_for_prompt(messages: list[dict[str, Any]], max_messages: int = 25) -> str:
+    """Turn dashboard message rows into a compact thread for the LLM prompt."""
+    lines: list[str] = []
+    slice_msgs = messages[-max_messages:] if len(messages) > max_messages else messages
+    for m in slice_msgs:
+        if not isinstance(m, dict):
+            continue
+        role = "You" if m.get("from_me") else "Lead"
+        c = str(m.get("content") or "").strip()
+        if c:
+            lines.append(f"{role}: {c}")
+    return "\n".join(lines)
+
+
+def generate_linkedin_message(
+    lead_name: str,
+    context: str = "",
+    *,
+    thread_context: str = "",
+) -> str:
     """
-    Generate a short LinkedIn outbound message starting with "Hello {Name},".
-    Uses lead_name for the greeting; context (e.g. campaign description) guides the body.
+    Generate a LinkedIn DM: cold outreach (Hello …) or a follow-up when thread_context is set.
+    context = campaign name / description; thread_context = recent messages (You:/Lead: lines).
     """
     first = _first_name(lead_name)
+    tc = (thread_context or "").strip()
     if not get_client():
+        if tc:
+            return (
+                "Thanks for your message. I'd be happy to share how Eolas helps clinical teams "
+                "get instant answers from their knowledge. Would a brief call this week work?"
+            )
         return (
             f"Hello {first},\n\n"
             "I noticed your profile and thought Eolas could be relevant for your work in healthcare. "
             "We help teams get instant answers from their clinical knowledge. "
             "Would you be open to a short demo?"
         )
-    prompt = f"""Write a short LinkedIn message to this lead. Rules:
+    if tc:
+        prompt = f"""You are replying in an existing LinkedIn DM thread with {first} (lead name for context only).
+
+Recent messages in the thread (oldest to newest):
+{tc[:6000]}
+
+Write a short follow-up message (2–5 sentences). Reference what they said if relevant.
+- Professional, UK/NHS healthcare context where appropriate.
+- Eolas: AI-powered knowledge retrieval for clinical teams; offer a short demo or next step if natural.
+- Do not paste the whole thread back. Do not use a subject line."""
+        if context:
+            prompt += f"\n\nCampaign/campaign context:\n{context[:800]}"
+        prompt += "\n\nOutput only the message body to send."
+    else:
+        prompt = f"""Write a short LinkedIn message to this lead. Rules:
 - Start exactly with "Hello {first}," (use this first name).
 - 2-4 sentences max. Professional, no hard sell.
 - Eolas: AI-powered knowledge retrieval for healthcare (UK/NHS focus). Offer a short demo or value.
 """
-    if context:
-        prompt += f"\nCampaign/context to guide the message:\n{context[:800]}"
-    prompt += "\nOutput only the message, no subject line."
+        if context:
+            prompt += f"\nCampaign/context to guide the message:\n{context[:800]}"
+        prompt += "\nOutput only the message, no subject line."
     try:
         client = get_client()
+        if not client:
+            return f"Hello {first},\n\nWould you be open to a short demo of Eolas?"
         resp = client.chat.completions.create(
             model=get_model_name(),
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=250,
+            max_tokens=350,
         )
         draft = (resp.choices[0].message.content or "").strip()
+        if tc:
+            return draft if draft else (
+                "Thanks for your message — I'd be happy to share more about Eolas. "
+                "Would a short call work this week?"
+            )
         if draft and not draft.lower().startswith("hello"):
             draft = f"Hello {first},\n\n{draft}"
         return draft if draft else f"Hello {first},\n\nWould you be open to a short demo of Eolas?"
     except Exception as e:
         logger.warning("generate_linkedin_message failed: %s", e)
-        return f"Hello {first},\n\nWould you be open to a short demo of Eolas for your team?"
+        return (
+            f"Thanks for your message. Would you be open to a short demo of Eolas?"
+            if tc
+            else f"Hello {first},\n\nWould you be open to a short demo of Eolas for your team?"
+        )
 
 
 def generate_linkedin_bulk_template(campaign_name: str, campaign_description: str = "") -> str:

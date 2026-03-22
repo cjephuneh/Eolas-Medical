@@ -27,6 +27,38 @@ def test_normalize_email_to_signal():
     assert raw.get("from_email") == "us@eolas.com"
 
 
+def test_normalize_skips_when_sender_is_our_mailbox():
+    """Outbound from our mailbox (From=Declan) is not a prospect response."""
+    email = {
+        "id": "out-1",
+        "from_email": "declan@mail.teameolasmedical.com",
+        "to_email": "prospect@hospital.nhs.uk",
+        "subject": "Follow up",
+        "body": "Our pitch",
+        "direction": "outbound",
+    }
+    with patch("poll.instantly.is_our_sending_address", lambda a: a.lower().startswith("declan@")):
+        assert normalize_email_to_signal(email) is None
+
+
+def test_normalize_inverted_from_uses_external_as_respondent():
+    """When Instantly lists From=mailbox and To=prospect, respondent is the prospect (To)."""
+    email = {
+        "id": "inv-1",
+        "from_email": "declan@mail.teameolasmedical.com",
+        "to_email": "doctor@nhs.uk",
+        "subject": "Re: hello",
+        "body": "Interested",
+    }
+    with patch("poll.instantly.is_our_sending_address", lambda a: "declan@" in a.lower()):
+        signal = normalize_email_to_signal(email)
+    assert signal is not None
+    assert signal["leadName"] == "doctor@nhs.uk"
+    raw = signal.get("raw") or {}
+    assert raw.get("to_email") == "doctor@nhs.uk"
+    assert raw.get("from_email") == "declan@mail.teameolasmedical.com"
+
+
 @patch("poll.instantly.requests.get")
 def test_fetch_unread_emails_empty(mock_get):
     mock_get.return_value.json.return_value = []

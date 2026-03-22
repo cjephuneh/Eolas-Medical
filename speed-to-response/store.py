@@ -2,7 +2,7 @@
 JSON file store for processed signals. Idempotency by signal id; atomic writes.
 """
 import json
-import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -59,6 +59,7 @@ def append(
     linkedin_url: str = "",
     reply_to_uuid: str = "",
     from_email: str = "",
+    subject: str = "",
 ) -> None:
     """Append a processed signal and persist atomically. Optional email/reply metadata for send-reply from UI."""
     records = _load()
@@ -78,6 +79,7 @@ def append(
             "linkedin_url": (linkedin_url or "")[:500],
             "reply_to_uuid": (reply_to_uuid or "")[:200],
             "from_email": (from_email or "")[:500],
+            "subject": (subject or "")[:500],
         }
     )
     _save(records)
@@ -86,3 +88,19 @@ def append(
 def get_all() -> list[dict[str, Any]]:
     """Return all processed records (for tests)."""
     return list(_load())
+
+
+def mark_replied(lead_id: str) -> str | None:
+    """Set replied_at (UTC ISO) on the record with matching id. Returns timestamp or None if not found."""
+    records = _load()
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    found = False
+    for r in records:
+        if str(r.get("id", "")) == str(lead_id):
+            r["replied_at"] = ts
+            found = True
+            break
+    if not found:
+        return None
+    _save(records)
+    return ts
