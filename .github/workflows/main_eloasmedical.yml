@@ -30,13 +30,13 @@ jobs:
           source antenv/bin/activate
           pip install -r requirements.txt
 
-      # ✅ Upload ONLY the app folder (not entire repo)
+      # ✅ Upload ONLY contents of the folder (FIXED)
       - name: Upload artifact for deployment jobs
         uses: actions/upload-artifact@v4
         with:
           name: python-app
           path: |
-            speed-to-response
+            speed-to-response/*
             !speed-to-response/antenv/
 
   deploy:
@@ -52,6 +52,10 @@ jobs:
         with:
           name: python-app
 
+      # 🔍 Optional debug (can remove later)
+      - name: Debug files
+        run: ls -R
+
       - name: Login to Azure
         uses: azure/login@v2
         with:
@@ -59,11 +63,11 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_E81DFC31C72042E58EBA1098B00F3244 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_8B6B566AD6F04DF5BDD3EE378FB1E110 }}
 
-      # ✅ Deploy the subfolder
+      # ✅ Deploy current directory (FIXED)
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
         id: deploy-to-webapp
         with:
           app-name: 'eloasmedical'
           slot-name: 'Production'
-          package: speed-to-response
+          package: .
