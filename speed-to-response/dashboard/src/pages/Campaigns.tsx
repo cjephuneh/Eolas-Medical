@@ -35,17 +35,27 @@ export function Campaigns() {
     setLoading(true);
     setSendResult(null);
 
-    // Include no-message leads as well so you can see "No thread yet" rows.
+    // Keep the initial load responsive by limiting campaigns/leads.
+    // If the user switches to "No thread", we refetch with include_no_messages=1.
     api
-      .linkedinThreads(undefined, 100, true)
+      .linkedinThreads(3, 25, filterTab === "no_messages")
       .then((leads) => setThreads(leads))
       .catch((err) => setError(err instanceof Error ? err.message : String(err)))
       .finally(() => setLoading(false));
-  }, []);
+  }, [filterTab]);
 
   useEffect(() => {
     loadThreads();
   }, [loadThreads]);
+
+  useEffect(() => {
+    // When the list is refetched for a different tab/search, drop any focused thread
+    // to avoid stale keys.
+    setFocused(null);
+    setGenerateKey(null);
+    setSendingKey(null);
+    setSendResult(null);
+  }, [filterTab, search]);
 
   const stats = useMemo(() => {
     let withMessages = 0;
@@ -115,7 +125,7 @@ export function Campaigns() {
     setSendResult(null);
 
     try {
-      await api.sendProspMessage(lead.linkedin_url, draft);
+      await api.sendProspMessage(lead.linkedin_url, draft, lead.prosp_sender_used);
       setSendResult({ ok: true, message: "Message sent." });
       setFocused(null);
       setDraftByLead((prev) => {

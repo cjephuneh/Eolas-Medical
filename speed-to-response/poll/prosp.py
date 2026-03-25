@@ -16,6 +16,7 @@ from config import (
     PROSP_CONVERSATIONS_PATH,
     PROSP_MAX_CAMPAIGNS,
     PROSP_MAX_LEADS_PER_CAMPAIGN,
+    PROSP_SENDERS,
     PROSP_SENDER,
 )
 
@@ -138,17 +139,58 @@ def _post_json_raw(path: str, payload: dict[str, Any]) -> tuple[dict[str, Any] |
 
 
 def fetch_conversation_for_lead(linkedin_url: str, sender: str = "") -> dict[str, Any] | None:
-    """Fetch conversation for one lead. POST api/v1/leads/conversation. Returns full JSON or None."""
-    payload: dict[str, Any] = {"linkedin_url": linkedin_url, "sender": sender or PROSP_SENDER or "default"}
-    out, code, _ = _post_json_raw("api/v1/leads/conversation", payload)
-    return out if code == 200 else None
+    """
+    Fetch conversation for one lead. POST api/v1/leads/conversation. Returns full JSON or None.
+
+    Prosp requires a valid `sender` (LinkedIn account used for the campaign). Some campaigns can
+    run under different sender accounts, so when `sender` isn't explicitly provided we try all
+    configured `PROSP_SENDERS`.
+    """
+    if not linkedin_url:
+        return None
+
+    senders_to_try: list[str] = []
+    if sender and sender.strip():
+        senders_to_try = [sender.strip().rstrip("/")]
+    elif PROSP_SENDERS:
+        senders_to_try = [s.rstrip("/") for s in PROSP_SENDERS if s and s.strip().rstrip("/")]
+
+    for s in senders_to_try:
+        payload: dict[str, Any] = {"linkedin_url": linkedin_url, "sender": s}
+        out, code, _ = _post_json_raw("api/v1/leads/conversation", payload)
+        if code == 200 and isinstance(out, dict):
+            out["_prosp_sender_used"] = s
+            return out
+
+    return None
 
 
-def fetch_conversation_for_lead_debug(linkedin_url: str, sender: str = "") -> tuple[dict[str, Any] | None, int, str]:
-    """Same as fetch_conversation_for_lead but returns (data, status_code, response_preview) for debugging."""
-    payload: dict[str, Any] = {"linkedin_url": linkedin_url, "sender": sender or PROSP_SENDER or "default"}
-    out, code, preview = _post_json_raw("api/v1/leads/conversation", payload)
-    return (out, code, preview)
+def fetch_conversation_for_lead_debug(
+    linkedin_url: str,
+    sender: str = "",
+) -> tuple[dict[str, Any] | None, int, str]:
+    """Same as fetch_conversation_for_lead but returns (data, status_code, response_preview)."""
+    if not linkedin_url:
+        return (None, 0, "missing linkedin_url")
+
+    senders_to_try: list[str] = []
+    if sender and sender.strip():
+        senders_to_try = [sender.strip().rstrip("/")]
+    elif PROSP_SENDERS:
+        senders_to_try = [s.rstrip("/") for s in PROSP_SENDERS if s and s.strip().rstrip("/")]
+
+    last_code = 0
+    last_preview = ""
+    for s in senders_to_try:
+        payload: dict[str, Any] = {"linkedin_url": linkedin_url, "sender": s}
+        out, code, preview = _post_json_raw("api/v1/leads/conversation", payload)
+        last_code = code
+        last_preview = preview
+        if code == 200 and isinstance(out, dict):
+            out["_prosp_sender_used"] = s
+            return (out, code, preview)
+
+    return (None, last_code, last_preview)
 
 
 def _request_conversations(
@@ -470,12 +512,14 @@ def _fetch_lead_with_conversation(lead: dict[str, Any]) -> dict[str, Any]:
             list(conv.keys()) if isinstance(conv, dict) else [],
         )
     messages = [_normalize_message_for_display(m) for m in messages_raw if isinstance(m, dict)]
+    sender_used = conv.get("_prosp_sender_used") if isinstance(conv, dict) else None
     return {
         "name": name,
         "linkedin_url": linkedin_url,
         "company": lead.get("company") or lead.get("company_name") or "",
         "messages": messages,
         "messages_count": len(messages),
+        "prosp_sender_used": sender_used,
     }
 
 
@@ -489,8 +533,12 @@ def get_campaign_leads_with_messages(
     Uses parallel requests (max_workers) so many conversations load at once.
     Returns structure for dashboard: campaign_id, campaign_name, leads with messages array.
     """
-    if not PROSP_API_KEY or not PROSP_SENDER:
-        return {"error": "PROSP_API_KEY or PROSP_SENDER not set", "campaign_id": campaign_id, "leads": []}
+    if not PROSP_API_KEY or not PROSP_SENDERS:
+        return {
+            "error": "PROSP_API_KEY or PROSP_SENDERS not set",
+            "campaign_id": campaign_id,
+            "leads": [],
+        }
     campaigns = fetch_campaigns()
     campaign = next((c for c in campaigns if (c.get("campaign_id") or c.get("campaignId")) == campaign_id), None)
     if not campaign:
@@ -540,20 +588,24 @@ def get_active_campaign_threads_with_messages(
     """
     if not PROSP_API_KEY:
         return {"error": "PROSP_API_KEY not set", "leads": []}
-    if not PROSP_SENDER:
-        return {"error": "PROSP_SENDER not set", "leads": []}
+    if not PROSP_SENDERS:
+        return {"error": "PROSP_SENDERS not set", "leads": []}
 
     campaigns = fetch_active_campaigns()
     if not campaigns:
         return {"campaigns_loaded": 0, "leads": [], "count": 0}
 
-    if max_campaigns is None:
-        max_campaigns = PROSP_MAX_CAMPAIGNS or None
-    if max_campaigns is not None and max_campaigns > 0:
-        campaigns = campaigns[:max_campaigns]
+    # Safety caps: Prosp aggregation can be very slow when you have many campaigns/leads.
+    # PROSP_MAX_CAMPAIGNS=0 means "no limit" in existing config, but for this endpoint we
+    # default to a small number so the dashboard stays responsive.
+    if max_campaigns is None or max_campaigns <= 0:
+        max_campaigns = 3
+    max_campaigns = min(max_campaigns, 10)
+    campaigns = campaigns[:max_campaigns]
 
-    if max_leads_per_campaign is None:
-        max_leads_per_campaign = PROSP_MAX_LEADS_PER_CAMPAIGN
+    if max_leads_per_campaign is None or max_leads_per_campaign <= 0:
+        max_leads_per_campaign = 25
+    max_leads_per_campaign = min(max_leads_per_campaign, 50)
 
     leads_out: list[dict[str, Any]] = []
     for c in campaigns:
@@ -564,8 +616,8 @@ def get_active_campaign_threads_with_messages(
 
         out = get_campaign_leads_with_messages(
             cid,
-            max_leads=max_leads_per_campaign or 25,
-            max_workers=max_workers,
+            max_leads=max_leads_per_campaign,
+            max_workers=min(max_workers, 6),
         )
         if out.get("error"):
             continue
@@ -711,14 +763,14 @@ def get_prosp_signals_via_campaigns(
     - POST api/v1/leads/conversation → messages per lead (body: linkedin_url, sender)
 
     Uses PROSP_MAX_CAMPAIGNS (0 = all) and PROSP_MAX_LEADS_PER_CAMPAIGN from config when args are None.
-    Requires PROSP_SENDER (your LinkedIn profile URL) or the conversation API returns 400.
+    Requires PROSP_SENDERS (your LinkedIn profile URLs) or the conversation API returns 400.
     """
     if not PROSP_API_KEY:
         return []
-    if not PROSP_SENDER:
+    if not PROSP_SENDERS:
         logger.warning(
-            "Prosp: PROSP_SENDER not set. Conversation API requires a valid sender LinkedIn URL; "
-            "no LinkedIn signals will be pulled. Set PROSP_SENDER in .env (e.g. https://www.linkedin.com/in/yourprofile)."
+            "Prosp: PROSP_SENDERS not set. Conversation API requires a valid sender LinkedIn URL; "
+            "no LinkedIn signals will be pulled. Set PROSP_SENDER in .env (comma-separated) to active sender URLs."
         )
         return []
     campaigns = fetch_campaigns()

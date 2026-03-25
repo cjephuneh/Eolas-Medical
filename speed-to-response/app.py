@@ -270,9 +270,10 @@ def prosp_send_message() -> tuple[dict, int]:
         data = request.get_json() or {}
         linkedin_url = (data.get("linkedin_url") or "").strip()
         message = (data.get("message") or "").strip()
+        sender = (data.get("sender") or "").strip()
         if not linkedin_url or not message:
             return jsonify({"error": "MISSING_FIELDS", "message": "linkedin_url and message required"}), 400
-        ok, err_msg = send_prosp_message(linkedin_url, message)
+        ok, err_msg = send_prosp_message(linkedin_url, message, sender_override=sender)
         if ok:
             return jsonify({"status": "ok", "message": "Message sent"}), 200
         return jsonify({

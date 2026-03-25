@@ -68,6 +68,8 @@ export interface CampaignLeadWithMessages {
   company: string;
   messages: CampaignLeadMessage[];
   messages_count: number;
+  /** Prosp sender account URL used to fetch this conversation thread (so we can send replies from the same account). */
+  prosp_sender_used?: string;
   /** Prosp campaign this thread belongs to (set by /linkedin/threads). */
   campaign_id?: string;
   campaign_name?: string;
@@ -170,10 +172,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
-  sendProspMessage: (linkedinUrl: string, message: string) =>
+  sendProspMessage: (linkedinUrl: string, message: string, sender?: string) =>
     request<{ status: string }>("/prosp/send-message", {
       method: "POST",
-      body: JSON.stringify({ linkedin_url: linkedinUrl, message }),
+      body: JSON.stringify({ linkedin_url: linkedinUrl, message, sender }),
     }),
   generateBulkMessage: (campaignId: string, campaignDescription?: string) =>
     request<{ message_template: string; campaign_name?: string }>(

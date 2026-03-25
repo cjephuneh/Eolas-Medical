@@ -28,7 +28,15 @@ INSTANTLY_API_KEY = _get("INSTANTLY_API_KEY")
 PROSP_API_KEY = _get("PROSP_API_KEY")
 PROSP_API_BASE = _get("PROSP_API_BASE", "https://prosp.ai").rstrip("/")
 PROSP_CONVERSATIONS_PATH = _get("PROSP_CONVERSATIONS_PATH", "").strip()
-PROSP_SENDER = _get("PROSP_SENDER", "").strip()  # Sender for leads/conversation (e.g. your LinkedIn URL or Prosp sender id)
+_PROSP_SENDER_RAW = _get("PROSP_SENDER", "").strip()
+# Prosp sender matching is picky; some setups use multiple active LinkedIn sender accounts.
+# Allow comma-separated sender URLs in PROSP_SENDER.
+_PROSP_SENDER_LIST = [
+    s.strip().rstrip("/") for s in _PROSP_SENDER_RAW.split(",") if s.strip().rstrip("/")
+]
+PROSP_SENDERS: list[str] = _PROSP_SENDER_LIST
+# Backwards-compatible single sender value (first in the list).
+PROSP_SENDER = PROSP_SENDERS[0] if PROSP_SENDERS else ""
 # Prosp campaign pull: 0 = all campaigns; 0 for leads = all leads per campaign (can be slow)
 PROSP_MAX_CAMPAIGNS = int(_get("PROSP_MAX_CAMPAIGNS", "0") or "0")
 PROSP_MAX_LEADS_PER_CAMPAIGN = int(_get("PROSP_MAX_LEADS_PER_CAMPAIGN", "200") or "200")

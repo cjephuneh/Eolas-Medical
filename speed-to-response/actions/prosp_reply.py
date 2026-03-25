@@ -14,7 +14,7 @@ from config import PROSP_API_BASE, PROSP_API_KEY, PROSP_SENDER
 logger = logging.getLogger(__name__)
 
 
-def send_prosp_message(linkedin_url: str, message: str) -> tuple[bool, str | None]:
+def send_prosp_message(linkedin_url: str, message: str, sender_override: str = "") -> tuple[bool, str | None]:
     """
     Send a LinkedIn message via Prosp POST /api/v1/leads/send-message.
     Uses PROSP_SENDER and PROSP_API_KEY from config.
@@ -23,7 +23,7 @@ def send_prosp_message(linkedin_url: str, message: str) -> tuple[bool, str | Non
     if not PROSP_API_KEY:
         logger.warning("PROSP_API_KEY not set; skipping Prosp send-message")
         return (False, "PROSP_API_KEY not set")
-    sender = (PROSP_SENDER or "").strip()
+    sender = (sender_override or PROSP_SENDER or "").strip().rstrip("/")
     if not sender:
         logger.warning("PROSP_SENDER not set; cannot send LinkedIn message")
         return (False, "PROSP_SENDER not set")
