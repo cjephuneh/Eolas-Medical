@@ -68,6 +68,46 @@ def fetch_campaigns() -> list[dict[str, Any]]:
     return list(data) if isinstance(data, list) else []
 
 
+def _campaign_is_active(c: dict[str, Any]) -> bool:
+    """Best-effort: Prosp campaign objects vary; attempt to detect "active/running/enabled" state."""
+    if not isinstance(c, dict) or not c:
+        return False
+
+    truthy_keys = ("active", "is_active", "enabled", "isEnabled", "isEnabledAccount", "enabledStatus", "running")
+    for k in truthy_keys:
+        if k in c:
+            v = c.get(k)
+            if isinstance(v, bool):
+                return v
+            if isinstance(v, str):
+                if v.strip().lower() in ("1", "true", "yes", "enabled", "active", "running", "live", "on"):
+                    return True
+                if v.strip().lower() in ("0", "false", "no", "disabled", "inactive", "paused", "parked", "off"):
+                    return False
+
+    # Some APIs use a status/state string.
+    status = ""
+    for k in ("status", "state", "campaign_status", "campaignState", "execution_status"):
+        if k in c and isinstance(c.get(k), str):
+            status = (c.get(k) or "").strip().lower()
+            if status:
+                break
+
+    if status:
+        return status in ("active", "running", "in_progress", "in-progress", "enabled", "live", "on")
+
+    # If we can't determine, default to including it (safer than showing nothing).
+    return True
+
+
+def fetch_active_campaigns() -> list[dict[str, Any]]:
+    """Fetch campaigns and filter to active/running/enabled ones (best-effort)."""
+    campaigns = fetch_campaigns()
+    if not campaigns:
+        return []
+    return [c for c in campaigns if _campaign_is_active(c)]
+
+
 def fetch_leads_for_campaign(campaign_id: str) -> list[dict[str, Any]]:
     """Fetch leads in a campaign (name, linkedinUrl). POST api/v1/campaigns/leads."""
     out, code = _post_json("api/v1/campaigns/leads", {"campaign_id": campaign_id})
@@ -478,6 +518,70 @@ def get_campaign_leads_with_messages(
         "campaign_id": campaign_id,
         "campaign_name": cname,
         "leads_count": len(leads_raw),
+        "leads": leads_out,
+    }
+
+
+def get_active_campaign_threads_with_messages(
+    max_campaigns: int | None = None,
+    max_leads_per_campaign: int | None = None,
+    include_no_messages: bool = False,
+    max_workers: int = 8,
+) -> dict[str, Any]:
+    """
+    Aggregate thread leads across active Prosp campaigns.
+
+    Each returned lead includes:
+      - campaign_id / campaign_name (so the UI can show which campaign it belongs to)
+      - name / linkedin_url / company
+      - messages / messages_count
+
+    This is intended for the dashboard "LinkedIn messages" view.
+    """
+    if not PROSP_API_KEY:
+        return {"error": "PROSP_API_KEY not set", "leads": []}
+    if not PROSP_SENDER:
+        return {"error": "PROSP_SENDER not set", "leads": []}
+
+    campaigns = fetch_active_campaigns()
+    if not campaigns:
+        return {"campaigns_loaded": 0, "leads": [], "count": 0}
+
+    if max_campaigns is None:
+        max_campaigns = PROSP_MAX_CAMPAIGNS or None
+    if max_campaigns is not None and max_campaigns > 0:
+        campaigns = campaigns[:max_campaigns]
+
+    if max_leads_per_campaign is None:
+        max_leads_per_campaign = PROSP_MAX_LEADS_PER_CAMPAIGN
+
+    leads_out: list[dict[str, Any]] = []
+    for c in campaigns:
+        cid = (c.get("campaign_id") or c.get("campaignId") or "").strip()
+        cname = (c.get("campaign_name") or c.get("campaignName") or c.get("name") or "").strip()
+        if not cid:
+            continue
+
+        out = get_campaign_leads_with_messages(
+            cid,
+            max_leads=max_leads_per_campaign or 25,
+            max_workers=max_workers,
+        )
+        if out.get("error"):
+            continue
+
+        for lead in out.get("leads") or []:
+            # Tag lead with the parent campaign for UI.
+            lead = dict(lead)
+            lead["campaign_id"] = cid
+            lead["campaign_name"] = cname
+            if not include_no_messages and (lead.get("messages_count") or 0) <= 0:
+                continue
+            leads_out.append(lead)
+
+    return {
+        "campaigns_loaded": len(campaigns),
+        "count": len(leads_out),
         "leads": leads_out,
     }
 

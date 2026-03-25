@@ -68,6 +68,9 @@ export interface CampaignLeadWithMessages {
   company: string;
   messages: CampaignLeadMessage[];
   messages_count: number;
+  /** Prosp campaign this thread belongs to (set by /linkedin/threads). */
+  campaign_id?: string;
+  campaign_name?: string;
 }
 
 export interface CampaignLeadsResponse {
@@ -76,6 +79,12 @@ export interface CampaignLeadsResponse {
   leads_count: number;
   leads: CampaignLeadWithMessages[];
   error?: string;
+}
+
+export interface LinkedinThreadsResponse {
+  campaigns_loaded?: number;
+  count?: number;
+  leads: CampaignLeadWithMessages[];
 }
 
 export interface RunCycleCounts {
@@ -127,6 +136,24 @@ export const api = {
     request<CampaignLeadsResponse>(
       `/campaigns/${encodeURIComponent(campaignId)}/leads?max_leads=${maxLeads}`
     ),
+  /** Active campaigns -> flattened list of lead conversations. */
+  linkedinThreads: async (
+    maxCampaigns?: number,
+    maxLeadsPerCampaign?: number,
+    includeNoMessages = false
+  ): Promise<CampaignLeadWithMessages[]> => {
+    const params = new URLSearchParams();
+    if (maxCampaigns != null) params.set("max_campaigns", String(maxCampaigns));
+    if (maxLeadsPerCampaign != null) {
+      params.set("max_leads_per_campaign", String(maxLeadsPerCampaign));
+    }
+    if (includeNoMessages) params.set("include_no_messages", "1");
+    const q = params.toString();
+    const res = await request<LinkedinThreadsResponse>(
+      `/linkedin/threads${q ? `?${q}` : ""}`
+    );
+    return Array.isArray(res.leads) ? res.leads : [];
+  },
   generateProspMessage: (name: string, context?: string) =>
     request<{ message: string }>("/prosp/generate-message", {
       method: "POST",

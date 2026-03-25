@@ -189,6 +189,42 @@ def campaign_leads(campaign_id: str) -> tuple[dict, int] | tuple[Response, int]:
         return jsonify({"error": "CAMPAIGN_LEADS_FAILED", "message": str(e)}), 500
 
 
+@app.route("/linkedin/threads", methods=["GET", "OPTIONS"])
+def linkedin_threads() -> tuple[dict, int] | tuple[Response, int]:
+    """Return a flattened list of leads + full conversation messages across active Prosp campaigns."""
+    if request.method == "OPTIONS":
+        return _cors_response(Response(status=204)), 204
+    try:
+        logger.info(
+            "linkedin_threads GET args: max_campaigns=%s max_leads_per_campaign=%s include_no_messages=%s",
+            request.args.get("max_campaigns", ""),
+            request.args.get("max_leads_per_campaign", ""),
+            request.args.get("include_no_messages", ""),
+        )
+        from poll.prosp import get_active_campaign_threads_with_messages
+
+        max_campaigns = request.args.get("max_campaigns", "").strip()
+        max_leads_per_campaign = request.args.get("max_leads_per_campaign", "").strip()
+        include_no_messages = request.args.get("include_no_messages", "").strip().lower() in ("1", "true", "yes")
+
+        max_campaigns_val = int(max_campaigns) if max_campaigns else None
+        max_leads_val = int(max_leads_per_campaign) if max_leads_per_campaign else None
+
+        out = get_active_campaign_threads_with_messages(
+            max_campaigns=max_campaigns_val,
+            max_leads_per_campaign=max_leads_val,
+            include_no_messages=include_no_messages,
+        )
+        if out.get("error"):
+            logger.warning("linkedin_threads error: %s", out.get("error"))
+            return jsonify(out), 400
+        logger.info("linkedin_threads success: campaigns_loaded=%s count=%s", out.get("campaigns_loaded"), out.get("count"))
+        return jsonify(out), 200
+    except Exception as e:
+        logger.exception("linkedin_threads failed: %s", e)
+        return jsonify({"error": "LINKEDIN_THREADS_FAILED", "message": str(e)}), 500
+
+
 @app.route("/prosp/generate-message", methods=["POST"])
 def prosp_generate_message() -> tuple[dict, int]:
     """Generate a LinkedIn message for one lead. Body: { \"name\": \"...\", \"context\": \"\" }. Returns message starting with Hello (name)."""
