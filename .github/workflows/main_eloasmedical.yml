@@ -25,17 +25,18 @@ jobs:
         with:
           python-version: '3.11'
 
-      # Optional: validate dependencies before deploy (Oryx still runs pip on App Service if SCM_DO_BUILD_DURING_DEPLOYMENT=true).
+      # Build venv in CI (--copies = real interpreter files, not symlinks to the GitHub runner).
+      # With SCM_DO_BUILD_DURING_DEPLOYMENT=false (set in deploy job), App Service skips Oryx and uses this antenv.
       - name: Create virtual environment and install dependencies
         working-directory: speed-to-response
         run: |
-          python -m venv antenv
+          python -m venv --copies antenv
           source antenv/bin/activate
+          pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Prepare deployment bundle
         run: |
-          rm -rf speed-to-response/antenv
           rm -f speed-to-response/.env
 
       - name: Upload artifact for deployment jobs
@@ -43,12 +44,6 @@ jobs:
         with:
           name: python-app
           path: speed-to-response
-
-      # 🚫 Opting Out of Oryx Build
-      # If you prefer to disable the Oryx build process during deployment, follow these steps:
-      # 1. Remove the SCM_DO_BUILD_DURING_DEPLOYMENT app setting from your Azure App Service Environment variables.
-      # 2. Refer to sample workflows for alternative deployment strategies: https://github.com/Azure/actions-workflow-samples/tree/master/AppService
-      
 
   deploy:
     runs-on: ubuntu-latest
@@ -70,10 +65,23 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_E81DFC31C72042E58EBA1098B00F3244 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_8B6B566AD6F04DF5BDD3EE378FB1E110 }}
 
+      # Required when deploying a pre-built antenv from CI; otherwise Oryx runs again on the instance and can fail or duplicate work.
+      - name: Skip Oryx remote build (use CI antenv)
+        run: |
+          RG=$(az webapp list --query "[?name=='eloasmedical'].resourceGroup | [0]" -o tsv)
+          if [ -z "$RG" ] || [ "$RG" = "None" ]; then
+            echo "::error::Could not resolve resource group for web app eloasmedical in the current subscription."
+            exit 1
+          fi
+          az webapp config appsettings set -g "$RG" -n eloasmedical --settings SCM_DO_BUILD_DURING_DEPLOYMENT=false
+          az webapp config appsettings delete -g "$RG" -n eloasmedical --setting-names WEBSITE_RUN_FROM_PACKAGE 2>/dev/null || true
+
       - name: 'Deploy to Azure Web App'
         uses: azure/webapps-deploy@v3
         id: deploy-to-webapp
         with:
           app-name: 'eloasmedical'
           slot-name: 'Production'
+          package: '.'
+          startup-command: 'gunicorn --bind=0.0.0.0:8000 --chdir /home/site/wwwroot app:app'
           
