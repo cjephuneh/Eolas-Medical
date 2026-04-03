@@ -57,7 +57,8 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: python-app
-      
+          path: deploy
+
       - name: Login to Azure
         uses: azure/login@v2
         with:
@@ -65,7 +66,8 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_E81DFC31C72042E58EBA1098B00F3244 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_8B6B566AD6F04DF5BDD3EE378FB1E110 }}
 
-      # Required when deploying a pre-built antenv from CI; otherwise Oryx runs again on the instance and can fail or duplicate work.
+      # App settings changes restart the SCM (Kudu) container. Deploying immediately after aborts OneDeploy
+      # with "Deployment has been stopped due to SCM container restart". Wait until SCM stabilizes, then zip deploy.
       - name: Skip Oryx remote build (use CI antenv)
         run: |
           RG=$(az webapp list --query "[?name=='eloasmedical'].resourceGroup | [0]" -o tsv)
@@ -73,8 +75,16 @@ jobs:
             echo "::error::Could not resolve resource group for web app eloasmedical in the current subscription."
             exit 1
           fi
+          echo "RG=$RG" >> "$GITHUB_ENV"
           az webapp config appsettings set -g "$RG" -n eloasmedical --settings SCM_DO_BUILD_DURING_DEPLOYMENT=false
           az webapp config appsettings delete -g "$RG" -n eloasmedical --setting-names WEBSITE_RUN_FROM_PACKAGE 2>/dev/null || true
+          echo "Waiting for SCM to restart after app settings update (required before zip deploy)..."
+          sleep 120
+
+      - name: Verify deploy bundle layout
+        run: |
+          test -f deploy/app.py || { echo "::error::deploy/app.py missing — artifact layout wrong"; ls -la deploy; exit 1; }
+          test -d deploy/antenv || { echo "::error::deploy/antenv missing — pre-built venv not in artifact"; exit 1; }
 
       - name: 'Deploy to Azure Web App'
         uses: azure/webapps-deploy@v3
@@ -82,6 +92,11 @@ jobs:
         with:
           app-name: 'eloasmedical'
           slot-name: 'Production'
-          package: '.'
-          startup-command: 'gunicorn --bind=0.0.0.0:8000 --chdir /home/site/wwwroot app:app'
+          package: deploy
+
+      # Override Portal "python app.py" so the worker uses gunicorn + antenv (matches Microsoft Flask guidance).
+      - name: Set startup command to gunicorn
+        if: success()
+        run: |
+          az webapp config set -g "$RG" -n eloasmedical --generic-configurations '{"appCommandLine":"gunicorn --bind=0.0.0.0:8000 --chdir /home/site/wwwroot app:app"}'
           
